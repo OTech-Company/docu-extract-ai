@@ -9,7 +9,260 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      document_processing: {
+        Row: {
+          created_at: string
+          document_type: string
+          file_name: string
+          file_size: number | null
+          id: string
+          language: string
+          processing_status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          document_type: string
+          file_name: string
+          file_size?: number | null
+          id?: string
+          language: string
+          processing_status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          document_type?: string
+          file_name?: string
+          file_size?: number | null
+          id?: string
+          language?: string
+          processing_status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      extracted_invoices: {
+        Row: {
+          account_number: string | null
+          bank_name: string | null
+          client_address: string | null
+          client_name: string | null
+          created_at: string
+          discount: number | null
+          document_id: string | null
+          due_date: string | null
+          id: string
+          invoice_date: string | null
+          invoice_number: string | null
+          payment_method: string | null
+          seller_address: string | null
+          seller_name: string | null
+          tax: number | null
+          total: number | null
+          validation_errors: Json | null
+          validation_status: string | null
+        }
+        Insert: {
+          account_number?: string | null
+          bank_name?: string | null
+          client_address?: string | null
+          client_name?: string | null
+          created_at?: string
+          discount?: number | null
+          document_id?: string | null
+          due_date?: string | null
+          id?: string
+          invoice_date?: string | null
+          invoice_number?: string | null
+          payment_method?: string | null
+          seller_address?: string | null
+          seller_name?: string | null
+          tax?: number | null
+          total?: number | null
+          validation_errors?: Json | null
+          validation_status?: string | null
+        }
+        Update: {
+          account_number?: string | null
+          bank_name?: string | null
+          client_address?: string | null
+          client_name?: string | null
+          created_at?: string
+          discount?: number | null
+          document_id?: string | null
+          due_date?: string | null
+          id?: string
+          invoice_date?: string | null
+          invoice_number?: string | null
+          payment_method?: string | null
+          seller_address?: string | null
+          seller_name?: string | null
+          tax?: number | null
+          total?: number | null
+          validation_errors?: Json | null
+          validation_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "extracted_invoices_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "document_processing"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_items: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          invoice_id: string | null
+          quantity: string | null
+          total_price: number | null
+          unit_price: number | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          invoice_id?: string | null
+          quantity?: string | null
+          total_price?: number | null
+          unit_price?: number | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          invoice_id?: string | null
+          quantity?: string | null
+          total_price?: number | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "extracted_invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ocr_results: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          document_id: string | null
+          extracted_text: string | null
+          id: string
+          ocr_model: string
+          processing_time_ms: number | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          document_id?: string | null
+          extracted_text?: string | null
+          id?: string
+          ocr_model: string
+          processing_time_ms?: number | null
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          document_id?: string | null
+          extracted_text?: string | null
+          id?: string
+          ocr_model?: string
+          processing_time_ms?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ocr_results_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "document_processing"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      processing_statistics: {
+        Row: {
+          failed_extractions: number | null
+          fine_tuning_threshold: number | null
+          id: string
+          last_updated: string
+          successful_extractions: number | null
+          total_documents: number | null
+        }
+        Insert: {
+          failed_extractions?: number | null
+          fine_tuning_threshold?: number | null
+          id?: string
+          last_updated?: string
+          successful_extractions?: number | null
+          total_documents?: number | null
+        }
+        Update: {
+          failed_extractions?: number | null
+          fine_tuning_threshold?: number | null
+          id?: string
+          last_updated?: string
+          successful_extractions?: number | null
+          total_documents?: number | null
+        }
+        Relationships: []
+      }
+      processing_steps: {
+        Row: {
+          created_at: string
+          document_id: string | null
+          error_message: string | null
+          id: string
+          input_data: Json | null
+          output_data: Json | null
+          processing_time_ms: number | null
+          status: string
+          step_name: string
+          step_order: number
+        }
+        Insert: {
+          created_at?: string
+          document_id?: string | null
+          error_message?: string | null
+          id?: string
+          input_data?: Json | null
+          output_data?: Json | null
+          processing_time_ms?: number | null
+          status?: string
+          step_name: string
+          step_order: number
+        }
+        Update: {
+          created_at?: string
+          document_id?: string | null
+          error_message?: string | null
+          id?: string
+          input_data?: Json | null
+          output_data?: Json | null
+          processing_time_ms?: number | null
+          status?: string
+          step_name?: string
+          step_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processing_steps_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "document_processing"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never

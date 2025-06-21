@@ -5,11 +5,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useState } from "react";
+import { Navigation } from "./components/Navigation";
 import Index from "./pages/Index";
+import { DocumentExtraction } from "./pages/DocumentExtraction";
+import { ProcessingPipeline } from "./pages/ProcessingPipeline";
+import { Reports } from "./pages/Reports";
 import NotFound from "./pages/NotFound";
 
 const App = () => {
-  // Create QueryClient inside the component to ensure it's created in the correct React context
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
       queries: {
@@ -25,10 +28,16 @@ const App = () => {
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <div className="min-h-screen bg-gray-50">
+            <Navigation />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/extraction" element={<DocumentExtraction />} />
+              <Route path="/processing-pipeline" element={<ProcessingPipeline />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </div>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

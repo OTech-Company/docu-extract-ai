@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, Receipt, FileCheck, CreditCard } from 'lucide-react';
+import { FileText, Receipt, FileCheck, CreditCard, FileImage } from 'lucide-react';
 
 interface DocumentTypeSelectorProps {
   value: string;
@@ -14,6 +14,7 @@ export const DocumentTypeSelector = ({ value, onChange }: DocumentTypeSelectorPr
     { value: 'receipt', label: 'Receipt', icon: Receipt },
     { value: 'contract', label: 'Contract', icon: FileCheck },
     { value: 'statement', label: 'Statement', icon: CreditCard },
+    { value: 'other', label: 'Other Document', icon: FileImage },
   ];
 
   return (
