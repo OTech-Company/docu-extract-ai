@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from './FileUpload';
 import { InvoiceDisplay } from './InvoiceDisplay';
@@ -101,7 +100,8 @@ export const DocumentExtractor = () => {
 
       const result = await response.json();
       const jsonStr = result.candidates[0].content.parts[0].text;
-      const data: InvoiceData = JSON.parse(jsonStr);
+      const cleanedJsonStr = jsonStr.replace(/```json|```/g, '').trim();
+      const data: InvoiceData = JSON.parse(cleanedJsonStr);
 
       // Add to history
       const processedInvoice: ProcessedInvoice = {

@@ -1,10 +1,15 @@
-
 import React from 'react';
 import { CheckCircle, Clock, AlertCircle, Loader2 } from 'lucide-react';
 import type { ProcessingStep } from '../types/processing';
 
 interface ProcessingStepsProps {
   steps: ProcessingStep[];
+}
+
+interface OcrResult {
+  text: string;
+  confidence: number;
+  error?: string;
 }
 
 export const ProcessingSteps = ({ steps }: ProcessingStepsProps) => {
@@ -56,7 +61,7 @@ export const ProcessingSteps = ({ steps }: ProcessingStepsProps) => {
               <h4 className="text-sm font-medium text-gray-700 mb-2">Output:</h4>
               {step.name === 'OCR Processing' ? (
                 <div className="space-y-3">
-                  {Object.entries(step.output).map(([model, result]: [string, any]) => (
+                  {Object.entries(step.output as Record<string, OcrResult>).map(([model, result]) => (
                     <div key={model} className="border rounded p-3">
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium text-sm text-blue-600">{model.toUpperCase()}</span>

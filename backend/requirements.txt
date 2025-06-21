@@ -1,0 +1,8 @@
+flask
+flask-cors
+paddleocr
+pytesseract
+easyocr
+doctr[torch]
+pillow
+numpy 

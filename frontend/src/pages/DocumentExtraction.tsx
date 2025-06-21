@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { InvoiceDisplay } from '../components/InvoiceDisplay';
@@ -6,7 +5,7 @@ import { DocumentTypeSelector } from '../components/DocumentTypeSelector';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { Loader2, AlertCircle, FileText, Database, CheckCircle } from 'lucide-react';
 import { db } from '../lib/supabase';
-import type { InvoiceData } from '../types';
+import { InvoiceData, ProcessedInvoice, ProcessingStatistics } from '../types';
 
 const API_KEYS = [
   "AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw",
@@ -21,12 +20,51 @@ const API_KEYS = [
   "AIzaSyCy7NppzTrbrxSfPS8Or2X2ya62JMRwn8E"
 ];
 
+// Recursively convert empty string date fields to null within InvoiceData structure
+function fixDatesInInvoiceData(data: InvoiceData): InvoiceData {
+  const newData = { ...data };
+
+  // Handle top-level invoice dates
+  if (newData.invoice) {
+    if (typeof newData.invoice.invoice_date === 'string' && newData.invoice.invoice_date.trim() === '') {
+      newData.invoice.invoice_date = null;
+    }
+    if (typeof newData.invoice.due_date === 'string' && newData.invoice.due_date.trim() === '') {
+      newData.invoice.due_date = null;
+    }
+  }
+
+  // Handle payment_instructions due_date
+  if (newData.payment_instructions) {
+    if (typeof newData.payment_instructions.due_date === 'string' && newData.payment_instructions.due_date.trim() === '') {
+      newData.payment_instructions.due_date = null;
+    }
+  }
+
+  // Handle items array - assuming no dates directly in items, but good to show pattern
+  if (Array.isArray(newData.items)) {
+    newData.items = newData.items.map(item => {
+      // If items had nested date objects, you'd recurse here
+      return item;
+    });
+  }
+
+  // No dates expected in subtotal directly, but for completeness
+  if (newData.subtotal) {
+    // if (typeof newData.subtotal.some_date_field === 'string' && newData.subtotal.some_date_field.trim() === '') {
+    //   newData.subtotal.some_date_field = null;
+    // }
+  }
+
+  return newData;
+}
+
 export const DocumentExtraction = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentInvoice, setCurrentInvoice] = useState<InvoiceData | null>(null);
-  const [processedInvoices, setProcessedInvoices] = useState<any[]>([]);
-  const [processingStats, setProcessingStats] = useState<any>(null);
+  const [processedInvoices, setProcessedInvoices] = useState<ProcessedInvoice[]>([]);
+  const [processingStats, setProcessingStats] = useState<ProcessingStatistics | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [documentType, setDocumentType] = useState('invoice');
   const [language, setLanguage] = useState('english');
@@ -46,6 +84,7 @@ export const DocumentExtraction = () => {
   const loadRecentInvoices = async () => {
     const result = await db.getRecentInvoices(10);
     if (result.success) {
+      console.log('Raw data from db.getRecentInvoices:', result.data);
       setProcessedInvoices(result.data || []);
     }
   };
@@ -119,7 +158,7 @@ export const DocumentExtraction = () => {
                         "payment_method": "<string>"
                       }
                     }
-                    Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes.`
+                    IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. If a value is missing, use an empty string. Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes.`
                   },
                   {
                     inline_data: {
@@ -154,14 +193,33 @@ export const DocumentExtraction = () => {
           }
 
           const result = await response.json();
+          console.log('Gemini API raw response:', result);
           const jsonStr = result.candidates[0].content.parts[0].text;
-          const data: InvoiceData = JSON.parse(jsonStr);
+          const cleanedJsonStr = jsonStr
+            .replace(/```json[\s\S]*?({[\s\S]*})[\s\S]*?```/i, '$1')
+            .replace(/```[\s\S]*?({[\s\S]*})[\s\S]*?```/g, '$1')
+            .replace(/^[\s`]+|[\s`]+$/g, '')
+            .replace(/^json\s*/i, '')
+            .trim();
+          console.log('Cleaned JSON string:', cleanedJsonStr);
+          let data: InvoiceData;
+          try {
+            data = JSON.parse(cleanedJsonStr);
+            console.log('Parsed InvoiceData:', data);
+          } catch (parseErr) {
+            setError('Failed to parse JSON: ' + (parseErr instanceof Error ? parseErr.message : String(parseErr)));
+            setIsLoading(false);
+            return;
+          }
+
+          const fixedData = fixDatesInInvoiceData(data);
+          console.log('Fixed InvoiceData (empty dates should be null):', fixedData);
 
           // Save to database
           setSaveStatus('saving');
           const saveResult = await db.saveExtractedInvoice({
             documentId,
-            ...data
+            ...fixedData
           });
           
           if (saveResult.success) {
@@ -171,6 +229,7 @@ export const DocumentExtraction = () => {
             await loadRecentInvoices();
           } else {
             setSaveStatus('error');
+            setError('Failed to save to database: ' + JSON.stringify(saveResult.error || 'Unknown error'));
           }
 
           setCurrentInvoice(data);

@@ -1,0 +1,47 @@
+# Debug: Print OCR object instances (Keeping for general debugging)
+print("PaddleOCR object:", get_paddle_ocr(), flush=True)
+print("DocTR object:", get_doctr_ocr(), flush=True)
+
+# Process by model
+if model == 'tesseract':
+    # ... existing tesseract logic ...
+
+elif model == 'easy':
+    # ... existing easyocr logic ...
+
+elif model == 'paddle':
+    try:
+        ocr = get_paddle_ocr()
+        img_np_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        result = ocr.ocr(img_np_bgr, cls=True)
+
+        if not result or not result[0]: # Check if result[0] exists and is not empty
+            return jsonify({'text': '', 'confidence': 0.0, 'note': 'No text detected by PaddleOCR'})
+        
+        text = "\n".join([line[1][0] for line in result[0]])
+        confidences = [line[1][1] for line in result[0]]
+        confidence = float(np.mean(confidences)) if confidences else 0.0
+        return jsonify({'text': text.strip(), 'confidence': confidence})
+    except Exception as e:
+        return jsonify({'text': '', 'confidence': 0.0, 'error': f'PaddleOCR error: {str(e)}'}), 200
+
+elif model == 'doctr':
+    try:
+        ocr = get_doctr_ocr()
+        img_np_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        doc = DocumentFile.from_images([img_np_bgr])
+        result = ocr(doc)
+        text = ""
+        for page in result.pages:
+            for block in page.blocks:
+                for line in block.lines:
+                    for word in line.words:
+                        text += word.value + " "
+        
+        confidence = 0.0  # DocTR doesn't easily expose overall image confidences
+        return jsonify({'text': text.strip(), 'confidence': confidence})
+    except Exception as e:
+        return jsonify({'text': '', 'confidence': 0.0, 'error': f'DocTR error: {str(e)}'}), 200
+
+else:
+# ... existing code ... 

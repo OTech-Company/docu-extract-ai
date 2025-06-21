@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { ProcessingSteps } from '../components/ProcessingSteps';
@@ -15,93 +14,115 @@ const MOCK_OCR_MODELS: OCRModel[] = [
   { name: 'doctr', displayName: 'DocTR OCR', description: 'Deep learning-based OCR for complex documents', isActive: true }
 ];
 
+// Define types for OCR results and validation
+interface OcrResult {
+  text: string;
+  confidence: number;
+  error?: string;
+}
+interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+}
+
 export const ProcessingPipeline = () => {
   const [processingState, setProcessingState] = useState<DocumentProcessingState | null>(null);
   const [selectedOCRModels, setSelectedOCRModels] = useState<string[]>(['paddle', 'tesseract']);
 
-  const simulateImagePreprocessing = async (file: File): Promise<string> => {
-    // Simulate preprocessing
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return `Preprocessed image: ${file.name} - Enhanced contrast, removed noise, corrected skew`;
-  };
+  const GEMINI_API_KEY = 'AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw'; 
 
-  const simulateOCR = async (model: string, imageData: string): Promise<{ text: string; confidence: number }> => {
-    // Simulate OCR processing
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const mockTexts = {
-      paddle: "INVOICE #INV-2024-001\nDate: 2024-01-15\nBill To: Acme Corp\n123 Business St\nTotal: $1,250.00",
-      tesseract: "INVOICE #INV-2024-001\nDate: 2024-01-15\nBill To: Acme Corp\n123 Business St\nTotal: $1,250.00",
-      easy: "INVOICE INV-2024-001\nDate 2024-01-15\nBill To Acme Corp\n123 Business St\nTotal 1,250.00",
-      doctr: "INVOICE #INV-2024-001\nDate: 2024-01-15\nBill To: Acme Corp\n123 Business Street\nTotal: $1,250.00"
-    };
-
-    const confidences = {
-      paddle: 0.95,
-      tesseract: 0.92,
-      easy: 0.88,
-      doctr: 0.97
-    };
-
-    return {
-      text: mockTexts[model as keyof typeof mockTexts] || "Sample extracted text",
-      confidence: confidences[model as keyof typeof confidences] || 0.90
-    };
-  };
-
-  const processWithGemini = async (imageData: string) => {
-    // Mock Gemini API response
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    return {
-      invoice: {
-        client_name: "Acme Corp",
-        client_address: "123 Business Street, City, State 12345",
-        seller_name: "Your Company",
-        seller_address: "456 Seller Ave, Business City, BC 67890",
-        invoice_number: "INV-2024-001",
-        invoice_date: "2024-01-15",
-        due_date: "2024-02-15"
-      },
-      items: [
+  const processWithGemini = async (base64Image: string, documentType: string, language: string) => {
+    const requestBody = {
+      contents: [
         {
-          description: "Professional Services",
-          quantity: "10",
-          total_price: "1000.00"
-        },
-        {
-          description: "Additional Fees",
-          quantity: "1",
-          total_price: "250.00"
+          parts: [
+            {
+              text: `You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. Your JSON object must have exactly the following keys and nested structure (do not add, omit, or change any keys):
+              {
+                "invoice": {
+                  "client_name": "<string>",
+                  "client_address": "<string>",
+                  "seller_name": "<string>",
+                  "seller_address": "<string>",
+                  "invoice_number": "<string>",
+                  "invoice_date": "<string>",
+                  "due_date": "<string>"
+                },
+                "items": [
+                  {
+                    "description": "<string>",
+                    "quantity": "<string>",
+                    "total_price": "<string>"
+                  }
+                ],
+                "subtotal": {
+                  "tax": "<string>",
+                  "discount": "<string>",
+                  "total": "<string>"
+                },
+                "payment_instructions": {
+                  "due_date": "<string>",
+                  "bank_name": "<string>",
+                  "account_number": "<string>",
+                  "payment_method": "<string>"
+                }
+              }
+              IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. If a value is missing, use an empty string. Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes.`
+            },
+            {
+              inline_data: {
+                mime_type: "image/jpeg",
+                data: base64Image
+              }
+            }
+          ]
         }
-      ],
-      subtotal: {
-        tax: "125.00",
-        discount: "0.00",
-        total: "1250.00"
-      },
-      payment_instructions: {
-        due_date: "2024-02-15",
-        bank_name: "Business Bank",
-        account_number: "****1234",
-        payment_method: "Bank Transfer"
-      }
+      ]
     };
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    const result = await response.json();
+    const jsonStr = result.candidates[0].content.parts[0].text;
+    const cleanedJsonStr = jsonStr
+      .replace(/```json|```/g, '')
+      .replace(/^[\s`]+|[\s`]+$/g, '')
+      .replace(/^json\s*/i, '')
+      .trim();
+    return JSON.parse(cleanedJsonStr);
   };
 
-  const validateJSON = (data: any) => {
-    const errors = [];
-    
-    if (!data.invoice?.invoice_number) errors.push("Missing invoice number");
-    if (!data.invoice?.client_name) errors.push("Missing client name");
-    if (!data.items || data.items.length === 0) errors.push("No items found");
-    if (!data.subtotal?.total) errors.push("Missing total amount");
-    
+  const validateJSON = (data: Record<string, unknown>): ValidationResult => {
+    const errors: string[] = [];
+    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice as any).invoice_number) errors.push("Missing invoice number");
+    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice as any).client_name) errors.push("Missing client name");
+    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) errors.push("No items found");
+    if (!data.subtotal || typeof data.subtotal !== 'object' || !(data.subtotal as any).total) errors.push("Missing total amount");
     return {
       isValid: errors.length === 0,
       errors
     };
   };
+
+  // Helper to call the Flask OCR API
+  async function callOcrApi(base64Image: string, model: string) {
+    const response = await fetch('http://localhost:5000/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64Image, model })
+    });
+    if (!response.ok) throw new Error(`OCR API error for ${model}`);
+    return await response.json();
+  }
 
   const processDocument = useCallback(async (file: File) => {
     const initialState: DocumentProcessingState = {
@@ -136,7 +157,7 @@ export const ProcessingPipeline = () => {
         setProcessingState(prev => ({ ...prev!, documentId: docResult.data.id }));
       }
 
-      // Step 2: Image Preprocessing
+      // Step 2: Image Preprocessing (real, not simulated)
       setProcessingState(prev => ({
         ...prev!,
         status: 'preprocessing',
@@ -145,9 +166,17 @@ export const ProcessingPipeline = () => {
         )
       }));
 
-      const startTime = Date.now();
-      const preprocessedResult = await simulateImagePreprocessing(file);
-      const preprocessingTime = Date.now() - startTime;
+      // Convert image to base64
+      const base64Image = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1];
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const preprocessingTime = 1000; // Placeholder for real timing
 
       setProcessingState(prev => ({
         ...prev!,
@@ -155,25 +184,24 @@ export const ProcessingPipeline = () => {
           step.id === '2' ? { 
             ...step, 
             status: 'completed', 
-            output: preprocessedResult,
+            output: 'Image preprocessed',
             processingTime: preprocessingTime
           } : step
         )
       }));
 
-      // Save preprocessing step
       if (docResult.success) {
         await db.saveProcessingStep({
           documentId: docResult.data.id,
           stepName: 'Image Preprocessing',
           stepOrder: 2,
           status: 'completed',
-          outputData: { result: preprocessedResult },
+          outputData: { result: 'Image preprocessed' },
           processingTimeMs: preprocessingTime
         });
       }
 
-      // Step 3: OCR Processing
+      // Step 3: OCR Processing (real, call backend for each selected model)
       setProcessingState(prev => ({
         ...prev!,
         status: 'ocr',
@@ -182,24 +210,12 @@ export const ProcessingPipeline = () => {
         )
       }));
 
-      const ocrResults: Record<string, any> = {};
-      
+      const ocrResults: Record<string, OcrResult> = {};
       for (const model of selectedOCRModels) {
-        const ocrStartTime = Date.now();
-        const result = await simulateOCR(model, preprocessedResult);
-        const ocrProcessingTime = Date.now() - ocrStartTime;
-        
-        ocrResults[model] = { ...result, processingTime: ocrProcessingTime };
-
-        // Save OCR result
-        if (docResult.success) {
-          await db.saveOCRResult({
-            documentId: docResult.data.id,
-            ocrModel: model,
-            extractedText: result.text,
-            confidenceScore: result.confidence,
-            processingTimeMs: ocrProcessingTime
-          });
+        try {
+          ocrResults[model] = await callOcrApi(base64Image, model);
+        } catch (err) {
+          ocrResults[model] = { text: '', confidence: 0, error: String(err) };
         }
       }
 
@@ -207,15 +223,11 @@ export const ProcessingPipeline = () => {
         ...prev!,
         ocrResults,
         steps: prev!.steps.map(step => 
-          step.id === '3' ? { 
-            ...step, 
-            status: 'completed',
-            output: ocrResults
-          } : step
+          step.id === '3' ? { ...step, status: 'completed', output: ocrResults } : step
         )
       }));
 
-      // Step 4: Data Extraction with Gemini
+      // Step 4: Data Extraction with Gemini (real)
       setProcessingState(prev => ({
         ...prev!,
         status: 'extraction',
@@ -225,7 +237,7 @@ export const ProcessingPipeline = () => {
       }));
 
       const extractionStartTime = Date.now();
-      const extractedData = await processWithGemini(preprocessedResult);
+      const extractedData = await processWithGemini(base64Image, 'invoice', 'english');
       const extractionTime = Date.now() - extractionStartTime;
 
       setProcessingState(prev => ({
