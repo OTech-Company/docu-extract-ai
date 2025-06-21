@@ -62,5 +62,3 @@ export const FileUpload = ({ onFileSelect, isLoading }: FileUploadProps) => {
     </div>
   );
 };
-
-<lov-add-dependency>react-dropzone@latest</lov-add-dependency>
