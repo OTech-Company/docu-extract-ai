@@ -1,3 +1,4 @@
+
 export interface InvoiceData {
   invoice: {
     client_name: string;
@@ -44,6 +45,7 @@ export interface ProcessedInvoice {
   payment_method: string | null;
   validation_status: string | null;
   created_at: string;
+  timestamp: number;
   invoice_items: Array<{
     id: string;
     invoice_id: string;
