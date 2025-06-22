@@ -1,4 +1,3 @@
-
 import type { DocumentProcessingState, ProcessingStep, OCRModel, ExtractedInvoiceData, InvoiceDetails, ItemDetails, SubtotalDetails, OcrResult, ValidationResult } from '../types/processing';
 
 // LLM API service functions
@@ -9,9 +8,9 @@ export interface LLMResponse {
   error?: string;
 }
 
-const GEMINI_API_KEY = process.env.REACT_APP_Gemini_API_KEY;
-const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY;
-const QWEN_API_KEY = process.env.REACT_APP_QWEN_API_KEY;
+const GEMINI_API_KEY = import.meta.env.REACT_APP_Gemini_API_KEY;
+const GROQ_API_KEY = import.meta.env.REACT_APP_GROQ_API_KEY;
+const QWEN_API_KEY = import.meta.env.REACT_APP_QWEN_API_KEY;
 
 const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object. Wrap the JSON object in triple backticks, e.g., \`\`\`json{...}\`\`\`:
 {

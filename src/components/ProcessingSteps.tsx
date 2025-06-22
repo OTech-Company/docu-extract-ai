@@ -20,6 +20,16 @@ interface LLMResponse {
   error?: string;
 }
 
+interface LLMStepOutput {
+  finalResult?: any;
+  llmOutputs?: Record<string, LLMResponse>;
+}
+
+interface ValidationStepOutput {
+  isValid: boolean;
+  errors: string[];
+}
+
 export const ProcessingSteps = ({ steps }: ProcessingStepsProps) => {
   const getStepIcon = (status: string) => {
     switch (status) {
@@ -86,7 +96,7 @@ export const ProcessingSteps = ({ steps }: ProcessingStepsProps) => {
               ) : step.name.includes('LLM') ? (
                 <div className="space-y-4">
                   {/* Show individual LLM outputs if majority voting */}
-                  {step.output.llmOutputs && Object.entries(step.output.llmOutputs).map(([llm, response]: [string, any]) => (
+                  {(step.output as LLMStepOutput).llmOutputs && Object.entries((step.output as LLMStepOutput).llmOutputs!).map(([llm, response]: [string, LLMResponse]) => (
                     <div key={llm} className="border rounded p-3">
                       <div className="flex justify-between items-center mb-2">
                         <div className="flex items-center space-x-2">
@@ -114,18 +124,18 @@ export const ProcessingSteps = ({ steps }: ProcessingStepsProps) => {
                       <span className="font-medium text-sm text-green-600">FINAL RESULT</span>
                     </div>
                     <pre className="text-xs text-gray-700 bg-white p-2 rounded overflow-auto max-h-40">
-                      {JSON.stringify(step.output.finalResult, null, 2)}
+                      {JSON.stringify((step.output as LLMStepOutput).finalResult, null, 2)}
                     </pre>
                   </div>
                 </div>
               ) : step.name === 'JSON Validation' ? (
                 <div>
-                  <div className={`text-sm font-medium ${step.output.isValid ? 'text-green-600' : 'text-red-600'}`}>
-                    {step.output.isValid ? 'Valid JSON structure' : 'Invalid JSON structure'}
+                  <div className={`text-sm font-medium ${(step.output as ValidationStepOutput).isValid ? 'text-green-600' : 'text-red-600'}`}>
+                    {(step.output as ValidationStepOutput).isValid ? 'Valid JSON structure' : 'Invalid JSON structure'}
                   </div>
-                  {step.output.errors && step.output.errors.length > 0 && (
+                  {(step.output as ValidationStepOutput).errors && (step.output as ValidationStepOutput).errors.length > 0 && (
                     <ul className="mt-2 text-sm text-red-600">
-                      {step.output.errors.map((error: string, i: number) => (
+                      {(step.output as ValidationStepOutput).errors.map((error: string, i: number) => (
                         <li key={i}>• {error}</li>
                       ))}
                     </ul>
