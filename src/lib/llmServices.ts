@@ -8,9 +8,9 @@ export interface LLMResponse {
   error?: string;
 }
 
-const GEMINI_API_KEY = 'AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw';
-const GROQ_API_KEY = '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';
-const QWEN_API_KEY = process.env.QWEN_API_KEY || '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';
+const GEMINI_API_KEY = process.env.REACT_APP_Gemini_API_KEY;
+const GROQ_API_KEY = process.env.REACT_APP_GROQ_API_KEY;
+const QWEN_API_KEY = process.env.REACT_APP_QWEN_API_KEY;
 
 const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object. Wrap the JSON object in triple backticks, e.g., \`\`\`json{...}\`\`\`:
 {
