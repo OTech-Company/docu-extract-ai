@@ -1,10 +1,13 @@
+
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { ProcessingSteps } from '../components/ProcessingSteps';
 import { OCRModelSelector } from '../components/OCRModelSelector';
+import { LLMSelector } from '../components/LLMSelector';
 import { JSONValidationDisplay } from '../components/JSONValidationDisplay';
 import { Cog, Upload } from 'lucide-react';
 import { db } from '../lib/supabase';
+import { callGeminiAPI, callGroqAPI, callQwenAPI, applyMajorityVoting, type LLMResponse } from '../lib/llmServices';
 import type { DocumentProcessingState, ProcessingStep, OCRModel } from '../types/processing';
 
 const MOCK_OCR_MODELS: OCRModel[] = [
@@ -28,78 +31,7 @@ interface ValidationResult {
 export const ProcessingPipeline = () => {
   const [processingState, setProcessingState] = useState<DocumentProcessingState | null>(null);
   const [selectedOCRModels, setSelectedOCRModels] = useState<string[]>(['paddle', 'tesseract']);
-
-  const GEMINI_API_KEY = 'AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw'; 
-
-  const processWithGemini = async (base64Image: string, documentType: string, language: string) => {
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: `You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. Your JSON object must have exactly the following keys and nested structure (do not add, omit, or change any keys):
-              {
-                "invoice": {
-                  "client_name": "<string>",
-                  "client_address": "<string>",
-                  "seller_name": "<string>",
-                  "seller_address": "<string>",
-                  "invoice_number": "<string>",
-                  "invoice_date": "<string>",
-                  "due_date": "<string>"
-                },
-                "items": [
-                  {
-                    "description": "<string>",
-                    "quantity": "<string>",
-                    "total_price": "<string>"
-                  }
-                ],
-                "subtotal": {
-                  "tax": "<string>",
-                  "discount": "<string>",
-                  "total": "<string>"
-                },
-                "payment_instructions": {
-                  "due_date": "<string>",
-                  "bank_name": "<string>",
-                  "account_number": "<string>",
-                  "payment_method": "<string>"
-                }
-              }
-              IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. If a value is missing, use an empty string. Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes.`
-            },
-            {
-              inline_data: {
-                mime_type: "image/jpeg",
-                data: base64Image
-              }
-            }
-          ]
-        }
-      ]
-    };
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      }
-    );
-
-    const result = await response.json();
-    const jsonStr = result.candidates[0].content.parts[0].text;
-    const cleanedJsonStr = jsonStr
-      .replace(/```json|```/g, '')
-      .replace(/^[\s`]+|[\s`]+$/g, '')
-      .replace(/^json\s*/i, '')
-      .trim();
-    return JSON.parse(cleanedJsonStr);
-  };
+  const [llmMode, setLLMMode] = useState<'single' | 'majority'>('single');
 
   const validateJSON = (data: Record<string, unknown>): ValidationResult => {
     const errors: string[] = [];
@@ -135,7 +67,7 @@ export const ProcessingPipeline = () => {
         { id: '1', name: 'Image Upload', status: 'completed' },
         { id: '2', name: 'Image Preprocessing', status: 'pending' },
         { id: '3', name: 'OCR Processing', status: 'pending' },
-        { id: '4', name: 'Data Extraction', status: 'pending' },
+        { id: '4', name: `${llmMode === 'single' ? 'Single LLM' : '3-LLM Majority Voting'} Data Extraction`, status: 'pending' },
         { id: '5', name: 'JSON Validation', status: 'pending' },
         { id: '6', name: 'Database Storage', status: 'pending' }
       ],
@@ -157,7 +89,7 @@ export const ProcessingPipeline = () => {
         setProcessingState(prev => ({ ...prev!, documentId: docResult.data.id }));
       }
 
-      // Step 2: Image Preprocessing (real, not simulated)
+      // Step 2: Image Preprocessing
       setProcessingState(prev => ({
         ...prev!,
         status: 'preprocessing',
@@ -176,7 +108,7 @@ export const ProcessingPipeline = () => {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const preprocessingTime = 1000; // Placeholder for real timing
+      const preprocessingTime = 1000;
 
       setProcessingState(prev => ({
         ...prev!,
@@ -201,7 +133,7 @@ export const ProcessingPipeline = () => {
         });
       }
 
-      // Step 3: OCR Processing (real, call backend for each selected model)
+      // Step 3: OCR Processing
       setProcessingState(prev => ({
         ...prev!,
         status: 'ocr',
@@ -227,7 +159,7 @@ export const ProcessingPipeline = () => {
         )
       }));
 
-      // Step 4: Data Extraction with Gemini (real)
+      // Step 4: LLM Data Extraction
       setProcessingState(prev => ({
         ...prev!,
         status: 'extraction',
@@ -237,7 +169,40 @@ export const ProcessingPipeline = () => {
       }));
 
       const extractionStartTime = Date.now();
-      const extractedData = await processWithGemini(base64Image, 'invoice', 'english');
+      let extractedData: any;
+      let llmOutputs: any = {};
+
+      if (llmMode === 'single') {
+        // Single LLM mode - use best OCR result
+        const bestOcrResult = Object.values(ocrResults).reduce((best, current) => 
+          current.confidence > best.confidence ? current : best
+        );
+        
+        const geminiResponse = await callGeminiAPI(bestOcrResult.text);
+        extractedData = geminiResponse.json;
+        llmOutputs = { gemini: geminiResponse };
+      } else {
+        // Majority voting mode - use all 3 LLMs
+        const bestOcrResult = Object.values(ocrResults).reduce((best, current) => 
+          current.confidence > best.confidence ? current : best
+        );
+
+        const [geminiResponse, groqResponse, qwenResponse] = await Promise.all([
+          callGeminiAPI(bestOcrResult.text),
+          callGroqAPI(bestOcrResult.text),
+          callQwenAPI(bestOcrResult.text)
+        ]);
+
+        llmOutputs = {
+          gemini: geminiResponse,
+          groq: groqResponse,
+          qwen: qwenResponse
+        };
+
+        // Apply majority voting
+        extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
+      }
+
       const extractionTime = Date.now() - extractionStartTime;
 
       setProcessingState(prev => ({
@@ -247,7 +212,7 @@ export const ProcessingPipeline = () => {
           step.id === '4' ? { 
             ...step, 
             status: 'completed',
-            output: extractedData,
+            output: { finalResult: extractedData, llmOutputs },
             processingTime: extractionTime
           } : step
         )
@@ -317,7 +282,7 @@ export const ProcessingPipeline = () => {
         )
       }));
     }
-  }, [selectedOCRModels]);
+  }, [selectedOCRModels, llmMode]);
 
   return (
     <div className="max-w-7xl mx-auto p-6">
@@ -338,6 +303,10 @@ export const ProcessingPipeline = () => {
             selectedModels={selectedOCRModels}
             onSelectionChange={setSelectedOCRModels}
           />
+          <LLMSelector 
+            selectedMode={llmMode}
+            onModeChange={setLLMMode}
+          />
           <FileUpload 
             onFileSelect={processDocument} 
             isLoading={false}
@@ -347,12 +316,15 @@ export const ProcessingPipeline = () => {
         <div className="space-y-8">
           <div className="bg-white rounded-lg shadow-sm border p-6">
             <h2 className="text-xl font-semibold mb-4">Document: {processingState.fileName}</h2>
-            <div className="grid grid-cols-3 gap-4 text-sm">
+            <div className="grid grid-cols-4 gap-4 text-sm">
               <div>
                 <span className="font-medium">Size:</span> {(processingState.fileSize / 1024).toFixed(1)} KB
               </div>
               <div>
                 <span className="font-medium">Type:</span> {processingState.documentType}
+              </div>
+              <div>
+                <span className="font-medium">LLM Mode:</span> {llmMode === 'single' ? 'Single LLM' : 'Majority Voting'}
               </div>
               <div>
                 <span className="font-medium">Status:</span> 

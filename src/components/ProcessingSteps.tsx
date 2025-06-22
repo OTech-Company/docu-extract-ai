@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { CheckCircle, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, Loader2, Brain } from 'lucide-react';
 import type { ProcessingStep } from '../types/processing';
 
 interface ProcessingStepsProps {
@@ -9,6 +10,13 @@ interface ProcessingStepsProps {
 interface OcrResult {
   text: string;
   confidence: number;
+  error?: string;
+}
+
+interface LLMResponse {
+  model: string;
+  json: any;
+  processingTime: number;
   error?: string;
 }
 
@@ -75,10 +83,41 @@ export const ProcessingSteps = ({ steps }: ProcessingStepsProps) => {
                     </div>
                   ))}
                 </div>
-              ) : step.name === 'Data Extraction' ? (
-                <pre className="text-xs text-gray-700 bg-gray-50 p-3 rounded overflow-auto max-h-40">
-                  {JSON.stringify(step.output, null, 2)}
-                </pre>
+              ) : step.name.includes('LLM') ? (
+                <div className="space-y-4">
+                  {/* Show individual LLM outputs if majority voting */}
+                  {step.output.llmOutputs && Object.entries(step.output.llmOutputs).map(([llm, response]: [string, any]) => (
+                    <div key={llm} className="border rounded p-3">
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center space-x-2">
+                          <Brain className="w-4 h-4 text-purple-600" />
+                          <span className="font-medium text-sm text-purple-600">{llm.toUpperCase()}</span>
+                        </div>
+                        <span className="text-sm text-gray-500">
+                          {response.processingTime}ms
+                        </span>
+                      </div>
+                      {response.error ? (
+                        <div className="text-red-600 text-sm">{response.error}</div>
+                      ) : (
+                        <pre className="text-xs text-gray-700 bg-gray-50 p-2 rounded overflow-auto max-h-32">
+                          {JSON.stringify(response.json, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                  
+                  {/* Show final result */}
+                  <div className="border-2 border-green-200 rounded p-3 bg-green-50">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                      <span className="font-medium text-sm text-green-600">FINAL RESULT</span>
+                    </div>
+                    <pre className="text-xs text-gray-700 bg-white p-2 rounded overflow-auto max-h-40">
+                      {JSON.stringify(step.output.finalResult, null, 2)}
+                    </pre>
+                  </div>
+                </div>
               ) : step.name === 'JSON Validation' ? (
                 <div>
                   <div className={`text-sm font-medium ${step.output.isValid ? 'text-green-600' : 'text-red-600'}`}>
