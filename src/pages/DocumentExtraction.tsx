@@ -88,7 +88,7 @@ export const DocumentExtraction = () => {
       // Add timestamp fallback for database records that don't have it
       const invoicesWithTimestamp = (result.data || []).map(invoice => ({
         ...invoice,
-        timestamp: invoice.timestamp || Date.now()
+        timestamp: Date.now()
       }));
       setProcessedInvoices(invoicesWithTimestamp);
     }
