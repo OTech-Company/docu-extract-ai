@@ -214,21 +214,21 @@ export const ProcessingPipeline = () => {
       let extractedData: ExtractedInvoiceData | null = null;
       let llmOutputs: Record<string, LLMResponse> = {};
 
-      // Get best OCR result
-      const validOcrResults = Object.values(ocrResults).filter(r => r.text && !r.error);
-      if (validOcrResults.length === 0) {
+      // Prepare OCR data for LLMs - include all selected OCR models
+      const ocrDataForLLMs = Object.entries(ocrResults)
+        .filter(([modelName, result]) => result.text && !result.error)
+        .map(([modelName, result]) => `${modelName}: ${result.text}`)
+        .join('\n\n');
+
+      if (!ocrDataForLLMs) {
         throw new Error('No valid OCR results available for LLM processing');
       }
-      
-      const bestOcrResult = validOcrResults.reduce((best, current) => 
-        current.confidence > best.confidence ? current : best
-      );
 
-      console.log('Using OCR text for LLM:', bestOcrResult.text.substring(0, 200) + '...');
+      console.log('OCR data for LLMs:', ocrDataForLLMs.substring(0, 200) + '...');
 
       if (llmMode === 'single') {
-        // Single LLM mode
-        const geminiResponse = await callGeminiAPI(bestOcrResult.text);
+        // Single LLM mode - use all OCR data
+        const geminiResponse = await callGeminiAPI(ocrDataForLLMs);
         extractedData = geminiResponse.json as ExtractedInvoiceData;
         llmOutputs = { gemini: geminiResponse };
         
@@ -236,13 +236,13 @@ export const ProcessingPipeline = () => {
           console.error('Gemini API failed:', geminiResponse.error);
         }
       } else {
-        // Majority voting mode - use all 3 LLMs
-        console.log('Starting majority voting with 3 LLMs');
+        // Majority voting mode - use all 3 LLMs with all OCR data
+        console.log('Starting majority voting with 3 LLMs using all OCR data');
         
         const [geminiResponse, groqResponse, qwenResponse] = await Promise.all([
-          callGeminiAPI(bestOcrResult.text),
-          callGroqAPI(bestOcrResult.text),
-          callQwenAPI(bestOcrResult.text)
+          callGeminiAPI(ocrDataForLLMs),
+          callGroqAPI(ocrDataForLLMs),
+          callQwenAPI(ocrDataForLLMs)
         ]);
 
         llmOutputs = {

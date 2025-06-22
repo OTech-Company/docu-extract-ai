@@ -9,9 +9,6 @@ export interface LLMResponse {
 }
 
 // Use the provided API keys directly
-const GEMINI_API_KEY = "AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw";
-const GROQ_API_KEY = "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";
-const QWEN_API_KEY = "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";
 
 const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object. Wrap the JSON object in triple backticks, e.g., \`\`\`json{...}\`\`\`:
 {
