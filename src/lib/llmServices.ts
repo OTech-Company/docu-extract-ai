@@ -1,3 +1,4 @@
+
 import type { DocumentProcessingState, ProcessingStep, OCRModel, ExtractedInvoiceData, InvoiceDetails, ItemDetails, SubtotalDetails, OcrResult, ValidationResult } from '../types/processing';
 
 // LLM API service functions
@@ -46,6 +47,16 @@ const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and
 
 export async function callGeminiAPI(text: string): Promise<LLMResponse> {
   const startTime = Date.now();
+  
+  if (!GEMINI_API_KEY) {
+    return {
+      model: 'Gemini',
+      json: null,
+      processingTime: Date.now() - startTime,
+      error: 'Gemini API key not configured'
+    };
+  }
+
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
@@ -96,6 +107,16 @@ export async function callGeminiAPI(text: string): Promise<LLMResponse> {
 
 export async function callGroqAPI(text: string): Promise<LLMResponse> {
   const startTime = Date.now();
+  
+  if (!GROQ_API_KEY) {
+    return {
+      model: 'Groq',
+      json: null,
+      processingTime: Date.now() - startTime,
+      error: 'Groq API key not configured'
+    };
+  }
+
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -149,6 +170,16 @@ export async function callGroqAPI(text: string): Promise<LLMResponse> {
 
 export async function callQwenAPI(text: string): Promise<LLMResponse> {
   const startTime = Date.now();
+  
+  if (!QWEN_API_KEY) {
+    return {
+      model: 'Qwen',
+      json: null,
+      processingTime: Date.now() - startTime,
+      error: 'Qwen API key not configured'
+    };
+  }
+
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -211,6 +242,10 @@ export async function applyMajorityVoting(responses: LLMResponse[]): Promise<Ext
 
   if (validResponses.length === 1) {
     return validResponses[0].json as ExtractedInvoiceData;
+  }
+
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key not configured for majority voting');
   }
 
   // Use Gemini to perform majority voting
