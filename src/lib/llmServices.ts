@@ -1,4 +1,3 @@
-
 import type { DocumentProcessingState, ProcessingStep, OCRModel, ExtractedInvoiceData, InvoiceDetails, ItemDetails, SubtotalDetails, OcrResult, ValidationResult } from '../types/processing';
 
 // LLM API service functions
@@ -12,7 +11,7 @@ export interface LLMResponse {
 // Use the provided API keys directly
 const GEMINI_API_KEY = "AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw";
 const GROQ_API_KEY = "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";
-const QWEN_API_KEY = "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";
+const QWEN_API_KEY = "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";
 
 const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object. Wrap the JSON object in triple backticks, e.g., \`\`\`json{...}\`\`\`:
 {
@@ -219,12 +218,12 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${QWEN_API_KEY}`,
-        'Content-Type': 'application/json',
         'HTTP-Referer': 'https://docuextract.ai',
-        'X-Title': 'DocuExtract AI'
+        'X-Title': 'DocuExtract AI',
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'qwen/qwen-2.5-7b-instruct:free',
+        model: 'qwen/qwen3-30b-a3b:free',
         messages: [{
           role: 'user',
           content: `${JSON_EXTRACTION_PROMPT}\n\nText to extract from:\n${text}`
@@ -282,6 +281,12 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
 export async function applyMajorityVoting(responses: LLMResponse[]): Promise<ExtractedInvoiceData> {
   console.log('Applying majority voting to responses:', responses);
   
+  // Always expect exactly 3 responses (Gemini, Groq, Qwen)
+  if (responses.length !== 3) {
+    console.error(`Expected 3 responses, got ${responses.length}`);
+    throw new Error(`Expected 3 responses for majority voting, got ${responses.length}`);
+  }
+  
   const validResponses = responses.filter(r => r.json && !r.error);
   
   if (validResponses.length === 0) {
@@ -294,27 +299,36 @@ export async function applyMajorityVoting(responses: LLMResponse[]): Promise<Ext
     return validResponses[0].json as ExtractedInvoiceData;
   }
 
-  if (!GEMINI_API_KEY) {
-    console.error('Gemini API key not configured for majority voting');
-    throw new Error('Gemini API key not configured for majority voting');
+  if (!QWEN_API_KEY) {
+    console.error('OpenRouter API key not configured for majority voting');
+    throw new Error('OpenRouter API key not configured for majority voting');
   }
 
   try {
-    // Use Gemini to perform majority voting
-    const votingPrompt = `You are given ${validResponses.length} JSON responses for invoice data extraction. Apply majority voting to determine the most accurate values for each field. Return the final JSON with the most commonly agreed upon values.\n\n${validResponses.map((r, i) => `Response ${i + 1} (${r.model}):\n${JSON.stringify(r.json, null, 2)}`).join('\n\n')}\n\nReturn ONLY the final JSON object with the majority-voted values:`;
+    // Use Mistral to perform majority voting on all 3 responses
+    const votingPrompt = `You are given exactly 3 JSON responses for invoice data extraction from different AI models. Apply majority voting to determine the most accurate values for each field. Return the final JSON with the most commonly agreed upon values.
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: votingPrompt }]
-          }]
-        })
-      }
-    );
+${responses.map((r, i) => `Response ${i + 1} (${r.model}):\n${JSON.stringify(r.json, null, 2)}`).join('\n\n')}
+
+Return ONLY the final JSON object with the majority-voted values:`;
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${QWEN_API_KEY}`,
+        'HTTP-Referer': 'https://docuextract.ai',
+        'X-Title': 'DocuExtract AI',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'mistralai/mistral-small-3.2-24b-instruct:free',
+        messages: [{
+          role: 'user',
+          content: votingPrompt
+        }],
+        temperature: 0.1
+      })
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -323,7 +337,7 @@ export async function applyMajorityVoting(responses: LLMResponse[]): Promise<Ext
     }
     
     const result = await response.json();
-    const jsonStr = result.candidates[0].content.parts[0].text;
+    const jsonStr = result.choices[0].message.content;
     const cleanedJsonStr = jsonStr.replace(/```json|```/g, '').trim();
     const finalResult = JSON.parse(cleanedJsonStr);
     

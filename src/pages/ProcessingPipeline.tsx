@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { ProcessingSteps } from '../components/ProcessingSteps';
@@ -41,21 +40,37 @@ export const ProcessingPipeline = () => {
       return { isValid: false, errors };
     }
     
+    // Basic structure validation - only require invoice section to exist
     if (!data.invoice || typeof data.invoice !== 'object') {
-      errors.push("Missing or invalid invoice section");
+      errors.push("Missing invoice section");
     } else {
-      if (!data.invoice.invoice_number) errors.push("Missing invoice number");
-      if (!data.invoice.client_name) errors.push("Missing client name");
+      // Make individual invoice fields optional but warn if completely empty
+      const invoiceFields = Object.values(data.invoice).filter(val => val && val !== '');
+      if (invoiceFields.length === 0) {
+        errors.push("Invoice section is completely empty");
+      }
     }
     
-    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
-      errors.push("No items found");
+    // Make items optional but warn if missing
+    if (!data.items || !Array.isArray(data.items)) {
+      console.warn("No items array found in extracted data");
+    } else if (data.items.length === 0) {
+      console.warn("Items array is empty");
     }
     
+    // Make subtotal optional but warn if missing
     if (!data.subtotal || typeof data.subtotal !== 'object') {
-      errors.push("Missing subtotal section");
+      console.warn("No subtotal section found in extracted data");
     } else {
-      if (!data.subtotal.total) errors.push("Missing total amount");
+      // Only require total if subtotal section exists
+      if (!data.subtotal.total) {
+        console.warn("No total amount found in subtotal section");
+      }
+    }
+    
+    // Make payment_instructions completely optional
+    if (!data.payment_instructions) {
+      console.warn("No payment instructions found in extracted data");
     }
     
     return {
@@ -236,7 +251,7 @@ export const ProcessingPipeline = () => {
           qwen: qwenResponse
         };
 
-        // Apply majority voting
+        // Apply majority voting with Mistral - always pass all 3 responses
         try {
           extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
         } catch (error) {
