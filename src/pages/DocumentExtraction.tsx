@@ -85,7 +85,12 @@ export const DocumentExtraction = () => {
     const result = await db.getRecentInvoices(10);
     if (result.success) {
       console.log('Raw data from db.getRecentInvoices:', result.data);
-      setProcessedInvoices(result.data || []);
+      // Add timestamp fallback for database records that don't have it
+      const invoicesWithTimestamp = (result.data || []).map(invoice => ({
+        ...invoice,
+        timestamp: invoice.timestamp || Date.now()
+      }));
+      setProcessedInvoices(invoicesWithTimestamp);
     }
   };
 
