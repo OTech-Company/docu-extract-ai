@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { ProcessingSteps } from '../components/ProcessingSteps';
@@ -32,12 +33,31 @@ export const ProcessingPipeline = () => {
   const [selectedOCRModels, setSelectedOCRModels] = useState<string[]>(['paddle', 'tesseract']);
   const [llmMode, setLLMMode] = useState<'single' | 'majority'>('single');
 
-  const validateJSON = (data: ExtractedInvoiceData): ValidationResult => {
+  const validateJSON = (data: ExtractedInvoiceData | null): ValidationResult => {
     const errors: string[] = [];
-    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice).invoice_number) errors.push("Missing invoice number");
-    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice).client_name) errors.push("Missing client name");
-    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) errors.push("No items found");
-    if (!data.subtotal || typeof data.subtotal !== 'object' || !(data.subtotal).total) errors.push("Missing total amount");
+    
+    if (!data) {
+      errors.push("No data extracted from LLM");
+      return { isValid: false, errors };
+    }
+    
+    if (!data.invoice || typeof data.invoice !== 'object') {
+      errors.push("Missing or invalid invoice section");
+    } else {
+      if (!data.invoice.invoice_number) errors.push("Missing invoice number");
+      if (!data.invoice.client_name) errors.push("Missing client name");
+    }
+    
+    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
+      errors.push("No items found");
+    }
+    
+    if (!data.subtotal || typeof data.subtotal !== 'object') {
+      errors.push("Missing subtotal section");
+    } else {
+      if (!data.subtotal.total) errors.push("Missing total amount");
+    }
+    
     return {
       isValid: errors.length === 0,
       errors
@@ -46,16 +66,23 @@ export const ProcessingPipeline = () => {
 
   // Helper to call the Flask OCR API
   async function callOcrApi(base64Image: string, model: string) {
-    const response = await fetch('http://localhost:5000/ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64Image, model })
-    });
-    if (!response.ok) throw new Error(`OCR API error for ${model}`);
-    return await response.json();
+    try {
+      const response = await fetch('http://localhost:5000/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Image, model })
+      });
+      if (!response.ok) throw new Error(`OCR API error for ${model}: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      console.error(`OCR API call failed for ${model}:`, error);
+      throw error;
+    }
   }
 
   const processDocument = useCallback(async (file: File) => {
+    console.log('Starting document processing for:', file.name);
+    
     const initialState: DocumentProcessingState = {
       fileName: file.name,
       fileSize: file.size,
@@ -146,6 +173,7 @@ export const ProcessingPipeline = () => {
         try {
           ocrResults[model] = await callOcrApi(base64Image, model);
         } catch (err) {
+          console.error(`OCR failed for model ${model}:`, err);
           ocrResults[model] = { text: '', confidence: 0, error: String(err) };
         }
       }
@@ -171,21 +199,31 @@ export const ProcessingPipeline = () => {
       let extractedData: ExtractedInvoiceData | null = null;
       let llmOutputs: Record<string, LLMResponse> = {};
 
+      // Get best OCR result
+      const validOcrResults = Object.values(ocrResults).filter(r => r.text && !r.error);
+      if (validOcrResults.length === 0) {
+        throw new Error('No valid OCR results available for LLM processing');
+      }
+      
+      const bestOcrResult = validOcrResults.reduce((best, current) => 
+        current.confidence > best.confidence ? current : best
+      );
+
+      console.log('Using OCR text for LLM:', bestOcrResult.text.substring(0, 200) + '...');
+
       if (llmMode === 'single') {
-        // Single LLM mode - use best OCR result
-        const bestOcrResult = Object.values(ocrResults).reduce((best, current) => 
-          current.confidence > best.confidence ? current : best
-        );
-        
+        // Single LLM mode
         const geminiResponse = await callGeminiAPI(bestOcrResult.text);
         extractedData = geminiResponse.json as ExtractedInvoiceData;
         llmOutputs = { gemini: geminiResponse };
+        
+        if (geminiResponse.error) {
+          console.error('Gemini API failed:', geminiResponse.error);
+        }
       } else {
         // Majority voting mode - use all 3 LLMs
-        const bestOcrResult = Object.values(ocrResults).reduce((best, current) => 
-          current.confidence > best.confidence ? current : best
-        );
-
+        console.log('Starting majority voting with 3 LLMs');
+        
         const [geminiResponse, groqResponse, qwenResponse] = await Promise.all([
           callGeminiAPI(bestOcrResult.text),
           callGroqAPI(bestOcrResult.text),
@@ -199,7 +237,18 @@ export const ProcessingPipeline = () => {
         };
 
         // Apply majority voting
-        extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
+        try {
+          extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
+        } catch (error) {
+          console.error('Majority voting failed:', error);
+          // Fallback to first successful response
+          const validResponses = [geminiResponse, groqResponse, qwenResponse].filter(r => r.json && !r.error);
+          if (validResponses.length > 0) {
+            extractedData = validResponses[0].json as ExtractedInvoiceData;
+          } else {
+            extractedData = null;
+          }
+        }
       }
 
       const extractionTime = Date.now() - extractionStartTime;
@@ -210,9 +259,10 @@ export const ProcessingPipeline = () => {
         steps: prev!.steps.map(step => 
           step.id === '4' ? { 
             ...step, 
-            status: 'completed',
+            status: extractedData ? 'completed' : 'error',
             output: { finalResult: extractedData, llmOutputs },
-            processingTime: extractionTime
+            processingTime: extractionTime,
+            error: extractedData ? undefined : 'Failed to extract data from LLMs'
           } : step
         )
       }));
@@ -241,7 +291,7 @@ export const ProcessingPipeline = () => {
       }));
 
       // Step 6: Database Storage
-      if (validationResult.isValid && docResult.success) {
+      if (validationResult.isValid && extractedData && docResult.success) {
         setProcessingState(prev => ({
           ...prev!,
           steps: prev!.steps.map(step => 
@@ -249,26 +299,46 @@ export const ProcessingPipeline = () => {
           )
         }));
 
-        const saveResult = await db.saveExtractedInvoice({
-          documentId: docResult.data.id,
-          ...extractedData
-        });
+        try {
+          const saveResult = await db.saveExtractedInvoice({
+            documentId: docResult.data.id,
+            ...extractedData
+          });
 
+          setProcessingState(prev => ({
+            ...prev!,
+            status: 'completed',
+            steps: prev!.steps.map(step => 
+              step.id === '6' ? { 
+                ...step, 
+                status: saveResult.success ? 'completed' : 'error',
+                output: saveResult.success ? 'Data saved successfully' : 'Failed to save data'
+              } : step
+            )
+          }));
+
+          if (saveResult.success) {
+            await db.updateStatistics();
+          }
+        } catch (error) {
+          console.error('Database storage failed:', error);
+          setProcessingState(prev => ({
+            ...prev!,
+            status: 'error',
+            steps: prev!.steps.map(step => 
+              step.id === '6' ? { 
+                ...step, 
+                status: 'error',
+                error: 'Database storage failed'
+              } : step
+            )
+          }));
+        }
+      } else {
         setProcessingState(prev => ({
           ...prev!,
-          status: 'completed',
-          steps: prev!.steps.map(step => 
-            step.id === '6' ? { 
-              ...step, 
-              status: saveResult.success ? 'completed' : 'error',
-              output: saveResult.success ? 'Data saved successfully' : 'Failed to save data'
-            } : step
-          )
+          status: validationResult.isValid ? 'completed' : 'error'
         }));
-
-        if (saveResult.success) {
-          await db.updateStatistics();
-        }
       }
 
     } catch (error) {
@@ -277,7 +347,11 @@ export const ProcessingPipeline = () => {
         ...prev!,
         status: 'error',
         steps: prev!.steps.map(step => 
-          step.status === 'processing' ? { ...step, status: 'error', error: 'Processing failed' } : step
+          step.status === 'processing' ? { 
+            ...step, 
+            status: 'error', 
+            error: error instanceof Error ? error.message : 'Processing failed'
+          } : step
         )
       }));
     }
