@@ -15,6 +15,7 @@ from doctr.io import DocumentFile
 # Set tesseract path if needed
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
+
 app = Flask(__name__)
 CORS(app)
 
@@ -23,12 +24,11 @@ paddle_ocr = None
 easy_ocr = None
 doctr_ocr = None
 
-
 def get_paddle_ocr():
     global paddle_ocr
     if paddle_ocr is None:
         print("[INFO] Loading PaddleOCR...", flush=True)
-        paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en')
+        paddle_ocr = PaddleOCR(lang='en')
     return paddle_ocr
 
 
@@ -77,22 +77,51 @@ def ocr_endpoint():
 
         elif model == 'paddle':
             ocr = get_paddle_ocr()
+            
+            # Convert PIL Image to BGR format for PaddleOCR
             bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-            result = ocr.ocr(bgr, cls=True)
+            
+            # Use the ocr() method (not predict()) for downgraded version
+            result = ocr.ocr(bgr)
             print("[INFO] PaddleOCR Result:", result, flush=True)
+            
             if not result or not result[0]:
                 return jsonify({'text': '', 'confidence': 0.0, 'note': 'No text found'})
-            text = '\n'.join([line[1][0] for line in result[0]])
-            conf = np.mean([line[1][1] for line in result[0]])
-            return jsonify({'text': text.strip(), 'confidence': float(conf)})
+            
+            # Extract text and confidence from result
+            texts = []
+            confidences = []
+            
+            for line in result[0]:
+                bbox, (text, confidence) = line
+                if text and text.strip():  # Only add non-empty text
+                    texts.append(text.strip())
+                    confidences.append(confidence)
+            
+            if not texts:
+                return jsonify({'text': '', 'confidence': 0.0, 'note': 'No text found'})
+            
+            # Combine results
+            combined_text = '\n'.join(texts)
+            avg_confidence = np.mean(confidences)
+            
+            return jsonify({
+                'text': combined_text, 
+                'confidence': float(avg_confidence)
+            })
+
+
 
         elif model == 'doctr':
             ocr = get_doctr_ocr()
-            doc = DocumentFile.from_images([np.array(image)])
+            doc = DocumentFile.from_images([np.array(image.convert("RGB"))])
+            print(f"[DEBUG] doctr image shape: {np.array(image).shape}, dtype: {np.array(image).dtype}", flush=True)
             result = ocr(doc)
             lines = [
-                w.value for p in result.pages for b in p.blocks for l in b.lines for w in l.words]
+                w.value for p in result.pages for b in p.blocks for l in b.lines for w in l.words
+            ]
             return jsonify({'text': ' '.join(lines).strip(), 'confidence': 0.0})
+
 
         return jsonify({'error': 'Unknown model'}), 400
 
