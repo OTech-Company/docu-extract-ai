@@ -1,9 +1,8 @@
-
 export interface ProcessingStep {
   id: string;
   name: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
-  output?: any;
+  output?: unknown;
   error?: string;
   processingTime?: number;
 }
@@ -15,6 +14,17 @@ export interface OCRModel {
   isActive: boolean;
 }
 
+export interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+}
+
+export interface OcrResult {
+  text: string;
+  confidence: number;
+  error?: string;
+}
+
 export interface DocumentProcessingState {
   documentId?: string;
   fileName: string;
@@ -23,7 +33,27 @@ export interface DocumentProcessingState {
   language: string;
   status: 'uploading' | 'preprocessing' | 'ocr' | 'extraction' | 'validation' | 'completed' | 'error';
   steps: ProcessingStep[];
-  ocrResults: Record<string, any>;
-  extractedData?: any;
-  validationResults?: any;
+  ocrResults: Record<string, OcrResult>;
+  extractedData?: ExtractedInvoiceData;
+  validationResults?: ValidationResult;
+}
+
+export interface InvoiceDetails {
+  invoice_number?: string;
+  client_name?: string;
+}
+
+export interface ItemDetails {
+  [key: string]: unknown; 
+}
+
+export interface SubtotalDetails {
+  total?: number;
+}
+
+export interface ExtractedInvoiceData {
+  invoice?: InvoiceDetails;
+  items?: ItemDetails[];
+  subtotal?: SubtotalDetails;
+  [key: string]: unknown;
 }

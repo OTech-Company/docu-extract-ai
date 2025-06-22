@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { ProcessingSteps } from '../components/ProcessingSteps';
@@ -8,7 +7,7 @@ import { JSONValidationDisplay } from '../components/JSONValidationDisplay';
 import { Cog, Upload } from 'lucide-react';
 import { db } from '../lib/supabase';
 import { callGeminiAPI, callGroqAPI, callQwenAPI, applyMajorityVoting, type LLMResponse } from '../lib/llmServices';
-import type { DocumentProcessingState, ProcessingStep, OCRModel } from '../types/processing';
+import type { DocumentProcessingState, ProcessingStep, OCRModel, ExtractedInvoiceData, InvoiceDetails, ItemDetails, SubtotalDetails } from '../types/processing';
 
 const MOCK_OCR_MODELS: OCRModel[] = [
   { name: 'paddle', displayName: 'Paddle OCR', description: 'Fast and accurate OCR for general documents', isActive: true },
@@ -33,12 +32,12 @@ export const ProcessingPipeline = () => {
   const [selectedOCRModels, setSelectedOCRModels] = useState<string[]>(['paddle', 'tesseract']);
   const [llmMode, setLLMMode] = useState<'single' | 'majority'>('single');
 
-  const validateJSON = (data: Record<string, unknown>): ValidationResult => {
+  const validateJSON = (data: ExtractedInvoiceData): ValidationResult => {
     const errors: string[] = [];
-    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice as any).invoice_number) errors.push("Missing invoice number");
-    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice as any).client_name) errors.push("Missing client name");
+    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice).invoice_number) errors.push("Missing invoice number");
+    if (!data.invoice || typeof data.invoice !== 'object' || !(data.invoice).client_name) errors.push("Missing client name");
     if (!data.items || !Array.isArray(data.items) || data.items.length === 0) errors.push("No items found");
-    if (!data.subtotal || typeof data.subtotal !== 'object' || !(data.subtotal as any).total) errors.push("Missing total amount");
+    if (!data.subtotal || typeof data.subtotal !== 'object' || !(data.subtotal).total) errors.push("Missing total amount");
     return {
       isValid: errors.length === 0,
       errors
@@ -169,8 +168,8 @@ export const ProcessingPipeline = () => {
       }));
 
       const extractionStartTime = Date.now();
-      let extractedData: any;
-      let llmOutputs: any = {};
+      let extractedData: ExtractedInvoiceData | null = null;
+      let llmOutputs: Record<string, LLMResponse> = {};
 
       if (llmMode === 'single') {
         // Single LLM mode - use best OCR result
@@ -179,7 +178,7 @@ export const ProcessingPipeline = () => {
         );
         
         const geminiResponse = await callGeminiAPI(bestOcrResult.text);
-        extractedData = geminiResponse.json;
+        extractedData = geminiResponse.json as ExtractedInvoiceData;
         llmOutputs = { gemini: geminiResponse };
       } else {
         // Majority voting mode - use all 3 LLMs

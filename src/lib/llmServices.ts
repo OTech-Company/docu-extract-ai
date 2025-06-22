@@ -1,17 +1,18 @@
+import type { DocumentProcessingState, ProcessingStep, OCRModel, ExtractedInvoiceData, InvoiceDetails, ItemDetails, SubtotalDetails, OcrResult, ValidationResult } from '../types/processing';
 
 // LLM API service functions
 export interface LLMResponse {
   model: string;
-  json: any;
+  json: unknown;
   processingTime: number;
   error?: string;
 }
 
 const GEMINI_API_KEY = 'AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw';
-const GROQ_API_KEY = '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';
-const QWEN_API_KEY = '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';
+const GROQ_API_KEY = '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';
+const QWEN_API_KEY = process.env.QWEN_API_KEY || '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';
 
-const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure:
+const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object. Wrap the JSON object in triple backticks, e.g., \`\`\`json{...}\`\`\`:
 {
   "invoice": {
     "client_name": "<string>",
@@ -41,8 +42,7 @@ const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and
     "payment_method": "<string>"
   }
 }
-
-Return ONLY the JSON object, no additional text or formatting.`;
+`;
 
 export async function callGeminiAPI(text: string): Promise<LLMResponse> {
   const startTime = Date.now();
@@ -63,9 +63,21 @@ export async function callGeminiAPI(text: string): Promise<LLMResponse> {
     if (!response.ok) throw new Error(`Gemini API error: ${response.status}`);
     
     const result = await response.json();
-    const jsonStr = result.candidates[0].content.parts[0].text;
-    const cleanedJsonStr = jsonStr.replace(/```json|```/g, '').trim();
-    const json = JSON.parse(cleanedJsonStr);
+    let jsonStr = result.candidates[0].content.parts[0].text;
+    const jsonMatch = jsonStr.match(/```json([\s\S]*?)```/);
+    if (jsonMatch && jsonMatch[1]) {
+      jsonStr = jsonMatch[1].trim();
+    } else {
+      console.warn('No ```json block found in Gemini response, attempting to find first { and last }.');
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+      } else {
+        throw new Error('Could not extract JSON from Gemini response.');
+      }
+    }
+    const json = JSON.parse(jsonStr);
 
     return {
       model: 'Gemini',
@@ -104,9 +116,21 @@ export async function callGroqAPI(text: string): Promise<LLMResponse> {
     if (!response.ok) throw new Error(`Groq API error: ${response.status}`);
     
     const result = await response.json();
-    const jsonStr = result.choices[0].message.content;
-    const cleanedJsonStr = jsonStr.replace(/```json|```/g, '').trim();
-    const json = JSON.parse(cleanedJsonStr);
+    let jsonStr = result.choices[0].message.content;
+    const jsonMatch = jsonStr.match(/```json([\s\S]*?)```/);
+    if (jsonMatch && jsonMatch[1]) {
+      jsonStr = jsonMatch[1].trim();
+    } else {
+      console.warn('No ```json block found in Groq response, attempting to find first { and last }.');
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+      } else {
+        throw new Error('Could not extract JSON from Groq response.');
+      }
+    }
+    const json = JSON.parse(jsonStr);
 
     return {
       model: 'Groq',
@@ -131,11 +155,11 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
       headers: {
         'Authorization': `Bearer ${QWEN_API_KEY}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://your-site.com',
-        'X-Title': 'Invoice Extraction'
+        'HTTP-Referer': 'https://docuextract.ai',
+        'X-Title': 'DocuExtract AI'
       },
       body: JSON.stringify({
-        model: 'qwen/qwen-2.5-72b-instruct',
+        model: 'qwen/qwen3-30b-a3b:free',
         messages: [{
           role: 'user',
           content: `${JSON_EXTRACTION_PROMPT}\n\nText to extract from:\n${text}`
@@ -147,9 +171,21 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
     if (!response.ok) throw new Error(`Qwen API error: ${response.status}`);
     
     const result = await response.json();
-    const jsonStr = result.choices[0].message.content;
-    const cleanedJsonStr = jsonStr.replace(/```json|```/g, '').trim();
-    const json = JSON.parse(cleanedJsonStr);
+    let jsonStr = result.choices[0].message.content;
+    const jsonMatch = jsonStr.match(/```json([\s\S]*?)```/);
+    if (jsonMatch && jsonMatch[1]) {
+      jsonStr = jsonMatch[1].trim();
+    } else {
+      console.warn('No ```json block found in Qwen response, attempting to find first { and last }.');
+      const firstBrace = jsonStr.indexOf('{');
+      const lastBrace = jsonStr.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);
+      } else {
+        throw new Error('Could not extract JSON from Qwen response.');
+      }
+    }
+    const json = JSON.parse(jsonStr);
 
     return {
       model: 'Qwen',
@@ -166,7 +202,7 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
   }
 }
 
-export async function applyMajorityVoting(responses: LLMResponse[]): Promise<any> {
+export async function applyMajorityVoting(responses: LLMResponse[]): Promise<ExtractedInvoiceData> {
   const validResponses = responses.filter(r => r.json && !r.error);
   
   if (validResponses.length === 0) {
@@ -174,15 +210,11 @@ export async function applyMajorityVoting(responses: LLMResponse[]): Promise<any
   }
 
   if (validResponses.length === 1) {
-    return validResponses[0].json;
+    return validResponses[0].json as ExtractedInvoiceData;
   }
 
   // Use Gemini to perform majority voting
-  const votingPrompt = `You are given ${validResponses.length} JSON responses for invoice data extraction. Apply majority voting to determine the most accurate values for each field. Return the final JSON with the most commonly agreed upon values.
-
-${validResponses.map((r, i) => `Response ${i + 1} (${r.model}):\n${JSON.stringify(r.json, null, 2)}`).join('\n\n')}
-
-Return ONLY the final JSON object with the majority-voted values:`;
+  const votingPrompt = `You are given ${validResponses.length} JSON responses for invoice data extraction. Apply majority voting to determine the most accurate values for each field. Return the final JSON with the most commonly agreed upon values.\n\n${validResponses.map((r, i) => `Response ${i + 1} (${r.model}):\n${JSON.stringify(r.json, null, 2)}`).join('\n\n')}\n\nReturn ONLY the final JSON object with the majority-voted values:`;
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
