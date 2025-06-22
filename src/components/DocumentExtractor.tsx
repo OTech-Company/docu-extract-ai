@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 import { FileUpload } from './FileUpload';
 import { InvoiceDisplay } from './InvoiceDisplay';
@@ -103,11 +104,33 @@ export const DocumentExtractor = () => {
       const cleanedJsonStr = jsonStr.replace(/```json|```/g, '').trim();
       const data: InvoiceData = JSON.parse(cleanedJsonStr);
 
-      // Add to history
+      // Add to history - create ProcessedInvoice with correct properties
       const processedInvoice: ProcessedInvoice = {
-        ...data,
         id: Math.random().toString(36).substr(2, 9),
-        timestamp: Date.now(),
+        document_id: Math.random().toString(36).substr(2, 9),
+        client_name: data.invoice.client_name,
+        client_address: data.invoice.client_address,
+        seller_name: data.invoice.seller_name,
+        seller_address: data.invoice.seller_address,
+        invoice_number: data.invoice.invoice_number,
+        invoice_date: data.invoice.invoice_date,
+        due_date: data.invoice.due_date,
+        tax: parseFloat(data.subtotal.tax) || null,
+        discount: parseFloat(data.subtotal.discount) || null,
+        total: parseFloat(data.subtotal.total) || null,
+        bank_name: data.payment_instructions.bank_name,
+        account_number: data.payment_instructions.account_number,
+        payment_method: data.payment_instructions.payment_method,
+        validation_status: 'processed',
+        created_at: new Date().toISOString(),
+        invoice_items: data.items.map((item, index) => ({
+          id: Math.random().toString(36).substr(2, 9),
+          invoice_id: '',
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: null,
+          total_price: parseFloat(item.total_price) || null,
+        }))
       };
 
       setProcessedInvoices(prev => [processedInvoice, ...prev]);
