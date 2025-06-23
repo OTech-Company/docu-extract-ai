@@ -50,6 +50,128 @@ const initialLlmModels = [
   { name: 'claude-v1', displayName: 'Claude V1', description: 'Anthropic\'s Claude model', isActive: false },
 ];
 
+// Template responses for different document types
+const getDocumentTemplate = (documentType: string) => {
+  const templates = {
+    invoice: {
+      "invoice": {
+        "client_name": "<string>",
+        "client_address": "<string>",
+        "seller_name": "<string>",
+        "seller_address": "<string>",
+        "invoice_number": "<string>",
+        "invoice_date": "<string>",
+        "due_date": "<string>"
+      },
+      "items": [
+        {
+          "description": "<string>",
+          "quantity": "<string>",
+          "unit_price": "<string>",
+          "total_price": "<string>"
+        }
+      ],
+      "subtotal": {
+        "tax": "<string>",
+        "discount": "<string>",
+        "total": "<string>"
+      },
+      "payment_instructions": {
+        "due_date": "<string>",
+        "bank_name": "<string>",
+        "account_number": "<string>",
+        "payment_method": "<string>"
+      }
+    },
+    receipt: {
+      "receipt": {
+        "merchant_name": "<string>",
+        "merchant_address": "<string>",
+        "receipt_number": "<string>",
+        "transaction_date": "<string>",
+        "transaction_time": "<string>"
+      },
+      "items": [
+        {
+          "description": "<string>",
+          "quantity": "<string>",
+          "unit_price": "<string>",
+          "total_price": "<string>"
+        }
+      ],
+      "payment": {
+        "subtotal": "<string>",
+        "tax": "<string>",
+        "discount": "<string>",
+        "total": "<string>",
+        "payment_method": "<string>",
+        "card_last_four": "<string>"
+      }
+    },
+    contract: {
+      "contract": {
+        "contract_title": "<string>",
+        "contract_number": "<string>",
+        "effective_date": "<string>",
+        "expiration_date": "<string>",
+        "contract_type": "<string>"
+      },
+      "parties": [
+        {
+          "party_type": "<string>",
+          "company_name": "<string>",
+          "contact_person": "<string>",
+          "address": "<string>",
+          "phone": "<string>",
+          "email": "<string>"
+        }
+      ],
+      "terms": {
+        "payment_terms": "<string>",
+        "delivery_terms": "<string>",
+        "cancellation_policy": "<string>",
+        "liability_clauses": "<string>"
+      },
+      "financial": {
+        "contract_value": "<string>",
+        "currency": "<string>",
+        "payment_schedule": "<string>"
+      }
+    },
+    other: {
+      "document": {
+        "document_type": "<string>",
+        "document_title": "<string>",
+        "document_date": "<string>",
+        "document_number": "<string>"
+      },
+      "content": {
+        "main_content": "<string>",
+        "key_information": "<array>",
+        "important_dates": "<array>",
+        "contact_information": "<string>"
+      },
+      "metadata": {
+        "language": "<string>",
+        "page_count": "<string>",
+        "document_format": "<string>"
+      }
+    }
+  };
+  
+  return templates[documentType as keyof typeof templates] || templates.other;
+};
+
+const getLLMPrompt = (documentType: string, language: string) => {
+  const template = getDocumentTemplate(documentType);
+  
+  return `Extract ${documentType} data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object:
+
+${JSON.stringify(template, null, 2)}
+
+Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes. Extract all available information and populate the fields accordingly. If a field is not found in the document, use an empty string "".`;
+};
+
 export const DocumentExtraction = () => {
   const [file, setFile] = useState<File | null>(null);
   const [documentType, setDocumentType] = useState('');
@@ -219,6 +341,8 @@ export const DocumentExtraction = () => {
 
       for (const llm of activeLlms) {
         try {
+          const llmPrompt = getLLMPrompt(documentType, language);
+          
           const llmResponse = await fetch('http://localhost:5000/api/llm/extract', {
             method: 'POST',
             headers: {
@@ -228,7 +352,8 @@ export const DocumentExtraction = () => {
               text: bestOcrResult.text,
               model: llm.name,
               document_type: documentType,
-              language: language
+              language: language,
+              prompt: llmPrompt
             }),
           });
 
@@ -389,7 +514,22 @@ export const DocumentExtraction = () => {
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Document Information</h1>
+      <h1 className="text-2xl font-bold mb-4">Document Information Extraction</h1>
+      
+      {/* Document Template Display */}
+      {documentType && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Expected Output Template for {documentType}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="bg-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-96">
+              {JSON.stringify(getDocumentTemplate(documentType), null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="mb-4">
         <CardHeader>
           <CardTitle>Select Document</CardTitle>
@@ -447,6 +587,7 @@ export const DocumentExtraction = () => {
                   onCheckedChange={() => handleOcrModelToggle(model.name)}
                 />
                 <Label htmlFor={model.name}>{model.displayName}</Label>
+                <span className="text-sm text-gray-500">{model.description}</span>
               </div>
             ))}
           </div>
@@ -467,13 +608,14 @@ export const DocumentExtraction = () => {
                   onCheckedChange={() => handleLlmModelToggle(model.name)}
                 />
                 <Label htmlFor={model.name}>{model.displayName}</Label>
+                <span className="text-sm text-gray-500">{model.description}</span>
               </div>
             ))}
           </div>
         </CardContent>
       </Card>
 
-      <Button onClick={processDocument} disabled={isProcessing}>
+      <Button onClick={processDocument} disabled={isProcessing} className="mb-4">
         {isProcessing ? 'Processing...' : 'Start Processing'}
       </Button>
 
@@ -507,24 +649,29 @@ export const DocumentExtraction = () => {
           <h2 className="text-xl font-bold mb-2">OCR Results</h2>
           <Card>
             <CardHeader>
-              <CardTitle>Extracted Text</CardTitle>
+              <CardTitle>Extracted Text from Multiple Models</CardTitle>
             </CardHeader>
             <CardContent>
               {Object.entries(processingState.ocrResults).map(([model, result]: [string, any]) => (
                 <div key={model} className="mb-4">
-                  <h3 className="text-lg font-semibold">{model}</h3>
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    {model}
+                    {result.error ? (
+                      <Badge variant="destructive">Failed</Badge>
+                    ) : (
+                      <Badge variant="secondary">Confidence: {(result.confidence * 100).toFixed(1)}%</Badge>
+                    )}
+                  </h3>
                   {result.error ? (
-                    <Badge variant="destructive">Error: {result.error}</Badge>
+                    <div className="text-red-600 bg-red-50 p-3 rounded">
+                      Error: {result.error}
+                    </div>
                   ) : (
-                    <>
-                      <Textarea
-                        value={result.text}
-                        onChange={(e) => setOcrText(e.target.value)}
-                        className="w-full h-48 resize-none"
-                        readOnly
-                      />
-                      <p className="text-sm text-gray-500">Confidence: {result.confidence}</p>
-                    </>
+                    <Textarea
+                      value={result.text}
+                      className="w-full h-32 resize-none mt-2"
+                      readOnly
+                    />
                   )}
                 </div>
               ))}
@@ -535,7 +682,17 @@ export const DocumentExtraction = () => {
 
       {processingState.extractedData && (
         <div className="mt-4">
-          <h2 className="text-xl font-bold mb-2">Extracted Data</h2>
+          <h2 className="text-xl font-bold mb-2">Extracted Structured Data</h2>
+          <Card>
+            <CardHeader>
+              <CardTitle>Final Extraction Result ({processingState.documentType})</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <pre className="bg-gray-50 p-4 rounded-lg text-sm overflow-auto max-h-96 whitespace-pre-wrap">
+                {JSON.stringify(processingState.extractedData, null, 2)}
+              </pre>
+            </CardContent>
+          </Card>
           <GenericDocumentDisplay data={processingState.extractedData} documentType={processingState.documentType} />
         </div>
       )}
