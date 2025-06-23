@@ -1,50 +1,84 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Download, TrendingUp, FileText, Database } from 'lucide-react';
+import { BarChart3, Download, TrendingUp, FileText, Database, Clock, Languages } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, ScatterChart, Scatter } from 'recharts';
 import { db } from '../lib/supabase';
 
+interface Document {
+  id: string;
+  file_name: string;
+  file_size: number;
+  document_type: string;
+  language: string;
+  processing_status: string;
+  created_at: string;
+  processing_steps?: any[];
+  ocr_results?: any[];
+  extracted_invoices?: any[];
+}
+
+interface ProcessingStep {
+  id: string;
+  document_id: string;
+  step_name: string;
+  status: string;
+  processing_time_ms: number;
+  created_at: string;
+  document_processing: {
+    document_type: string;
+    language: string;
+    created_at: string;
+  };
+}
+
 export const Reports = () => {
+  const [allDocuments, setAllDocuments] = useState<Document[]>([]);
+  const [processingSteps, setProcessingSteps] = useState<ProcessingStep[]>([]);
   const [stats, setStats] = useState<any>(null);
-  const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
+  const [selectedDocumentType, setSelectedDocumentType] = useState<string>('all');
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
+  const [loading, setLoading] = useState(true);
+
+  // Derived data
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
   const [documentTypeData, setDocumentTypeData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [languageData, setLanguageData] = useState<any[]>([]);
+  const [performanceData, setPerformanceData] = useState<any[]>([]);
+  const [statusData, setStatusData] = useState<any[]>([]);
 
   useEffect(() => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (allDocuments.length > 0) {
+      generateChartData();
+    }
+  }, [allDocuments, processingSteps, selectedDocumentType, selectedLanguage]);
+
   const loadData = async () => {
     setLoading(true);
     try {
-      // Load basic stats and invoices first
-      const [statsResult, invoicesResult] = await Promise.all([
-        db.getProcessingStatistics(),
-        db.getRecentInvoices(50)
+      const [documentsResult, stepsResult, statsResult] = await Promise.all([
+        db.getAllDocuments(1000),
+        db.getProcessingStepsAnalytics(),
+        db.getProcessingStatistics()
       ]);
-      
+
+      if (documentsResult.success) {
+        setAllDocuments(documentsResult.data || []);
+      }
+
+      if (stepsResult.success) {
+        setProcessingSteps(stepsResult.data || []);
+      }
+
       if (statsResult.success) {
         setStats(statsResult.data);
       }
-      
-      if (invoicesResult.success) {
-        const invoices = invoicesResult.data || [];
-        setRecentInvoices(invoices);
-        
-        // Generate chart data from the actual invoice data
-        const monthlyStats = generateMonthlyStatsFromInvoices(invoices);
-        setMonthlyData(monthlyStats);
-        
-        const typeDistribution = analyzeDocumentTypes(invoices);
-        setDocumentTypeData(typeDistribution);
-      }
 
-      // Try to load additional data for better charts
-      await loadMonthlyData();
-      await loadDocumentTypeData();
-      
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -52,163 +86,208 @@ export const Reports = () => {
     }
   };
 
-  const loadMonthlyData = async () => {
-    try {
-      // Use existing getRecentInvoices method to get more data
-      const allInvoicesResult = await db.getRecentInvoices(1000); // Get more invoices
-      
-      if (allInvoicesResult.success && allInvoicesResult.data) {
-        const monthlyStats = generateMonthlyStatsFromInvoices(allInvoicesResult.data);
-        setMonthlyData(monthlyStats);
-      } else {
-        // Generate from current recentInvoices
-        const monthlyStats = generateMonthlyStatsFromInvoices(recentInvoices);
-        setMonthlyData(monthlyStats);
-      }
-    } catch (error) {
-      console.error('Error loading monthly data:', error);
-      // Generate from current recentInvoices as fallback
-      const monthlyStats = generateMonthlyStatsFromInvoices(recentInvoices);
-      setMonthlyData(monthlyStats);
-    }
+  const generateChartData = () => {
+    const filteredDocuments = filterDocuments(allDocuments);
+    const filteredSteps = filterProcessingSteps(processingSteps);
+
+    // Generate monthly data
+    const monthlyStats = generateMonthlyStats(filteredDocuments);
+    setMonthlyData(monthlyStats);
+
+    // Generate document type distribution
+    const typeDistribution = generateDocumentTypeDistribution(filteredDocuments);
+    setDocumentTypeData(typeDistribution);
+
+    // Generate language distribution
+    const langDistribution = generateLanguageDistribution(filteredDocuments);
+    setLanguageData(langDistribution);
+
+    // Generate performance data
+    const perfData = generatePerformanceData(filteredSteps);
+    setPerformanceData(perfData);
+
+    // Generate status distribution
+    const statusDistribution = generateStatusDistribution(filteredDocuments);
+    setStatusData(statusDistribution);
   };
 
-  const loadDocumentTypeData = async () => {
-    try {
-      // Use existing getRecentInvoices method to analyze document types
-      const allInvoicesResult = await db.getRecentInvoices(1000);
-      
-      if (allInvoicesResult.success && allInvoicesResult.data) {
-        const typeDistribution = analyzeDocumentTypes(allInvoicesResult.data);
-        setDocumentTypeData(typeDistribution);
-      } else {
-        // Analyze current recentInvoices
-        const typeDistribution = analyzeDocumentTypes(recentInvoices);
-        setDocumentTypeData(typeDistribution);
-      }
-    } catch (error) {
-      console.error('Error loading document type data:', error);
-      // Analyze current recentInvoices as fallback
-      const typeDistribution = analyzeDocumentTypes(recentInvoices);
-      setDocumentTypeData(typeDistribution);
-    }
+  const filterDocuments = (documents: Document[]) => {
+    return documents.filter(doc => {
+      const typeMatch = selectedDocumentType === 'all' || doc.document_type === selectedDocumentType;
+      const langMatch = selectedLanguage === 'all' || doc.language === selectedLanguage;
+      return typeMatch && langMatch;
+    });
   };
 
-  const generateMonthlyStatsFromInvoices = (invoices) => {
-    if (!invoices || invoices.length === 0) {
-      return [
-        { month: 'Jan', processed: 0, successful: 0 },
-        { month: 'Feb', processed: 0, successful: 0 },
-        { month: 'Mar', processed: 0, successful: 0 },
-        { month: 'Apr', processed: 0, successful: 0 },
-        { month: 'May', processed: 0, successful: 0 },
-        { month: 'Jun', processed: 0, successful: 0 }
-      ];
-    }
+  const filterProcessingSteps = (steps: ProcessingStep[]) => {
+    return steps.filter(step => {
+      const typeMatch = selectedDocumentType === 'all' || step.document_processing.document_type === selectedDocumentType;
+      const langMatch = selectedLanguage === 'all' || step.document_processing.language === selectedLanguage;
+      return typeMatch && langMatch;
+    });
+  };
 
+  const generateMonthlyStats = (documents: Document[]) => {
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const now = new Date();
     const monthlyStats = [];
 
-    // Get last 6 months
     for (let i = 5; i >= 0; i--) {
       const targetDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthIndex = targetDate.getMonth();
       const year = targetDate.getFullYear();
       const monthName = monthNames[monthIndex];
-      
-      // Filter invoices for this month and year
-      const monthInvoices = invoices.filter(invoice => {
-        const invoiceDate = new Date(invoice.created_at);
-        return invoiceDate.getMonth() === monthIndex && invoiceDate.getFullYear() === year;
+
+      const monthDocuments = documents.filter(doc => {
+        const docDate = new Date(doc.created_at);
+        return docDate.getMonth() === monthIndex && docDate.getFullYear() === year;
       });
 
-      const processed = monthInvoices.length;
-      // Assume successful extraction if we have the required fields
-      const successful = monthInvoices.filter(invoice => 
-        invoice.invoice_number || invoice.client_name || invoice.total
+      const processed = monthDocuments.length;
+      const successful = monthDocuments.filter(doc => 
+        doc.processing_status === 'completed' || doc.processing_status === 'successful'
+      ).length;
+      const failed = monthDocuments.filter(doc => 
+        doc.processing_status === 'failed' || doc.processing_status === 'error'
       ).length;
 
       monthlyStats.push({
         month: monthName,
         processed,
-        successful
+        successful,
+        failed,
+        successRate: processed > 0 ? Math.round((successful / processed) * 100) : 0
       });
     }
 
     return monthlyStats;
   };
 
-  const analyzeDocumentTypes = (invoices) => {
-    if (!invoices || invoices.length === 0) {
-      return [
-        { name: 'No Data', value: 1, color: '#9CA3AF' }
-      ];
-    }
+  const generateDocumentTypeDistribution = (documents: Document[]) => {
+    const typeCount = documents.reduce((acc, doc) => {
+      acc[doc.document_type] = (acc[doc.document_type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
 
-    // Analyze the actual invoice data to determine types
-    const total = invoices.length;
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899'];
     
-    // Look for patterns in the data to classify document types
-    let invoiceCount = 0;
-    let receiptCount = 0;
-    let contractCount = 0;
-    let statementCount = 0;
+    return Object.entries(typeCount).map(([type, count], index) => ({
+      name: type.charAt(0).toUpperCase() + type.slice(1),
+      value: count,
+      color: colors[index % colors.length]
+    }));
+  };
 
-    invoices.forEach(invoice => {
-      // Simple heuristics based on available data
-      if (invoice.invoice_number) {
-        invoiceCount++;
-      } else if (invoice.total && !invoice.client_name) {
-        receiptCount++;
-      } else if (invoice.client_name && !invoice.total) {
-        contractCount++;
-      } else {
-        statementCount++;
+  const generateLanguageDistribution = (documents: Document[]) => {
+    const langCount = documents.reduce((acc, doc) => {
+      acc[doc.language] = (acc[doc.language] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+    
+    return Object.entries(langCount).map(([lang, count], index) => ({
+      name: lang.toUpperCase(),
+      value: count,
+      color: colors[index % colors.length]
+    }));
+  };
+
+  const generatePerformanceData = (steps: ProcessingStep[]) => {
+    const stepGroups = steps.reduce((acc, step) => {
+      if (!acc[step.step_name]) {
+        acc[step.step_name] = [];
       }
-    });
+      acc[step.step_name].push(step.processing_time_ms);
+      return acc;
+    }, {} as Record<string, number[]>);
 
-    const result = [];
-    if (invoiceCount > 0) result.push({ name: 'Invoices', value: invoiceCount, color: '#3B82F6' });
-    if (receiptCount > 0) result.push({ name: 'Receipts', value: receiptCount, color: '#10B981' });
-    if (contractCount > 0) result.push({ name: 'Contracts', value: contractCount, color: '#F59E0B' });
-    if (statementCount > 0) result.push({ name: 'Statements', value: statementCount, color: '#EF4444' });
+    return Object.entries(stepGroups).map(([stepName, times]) => ({
+      step: stepName,
+      avgTime: Math.round(times.reduce((sum, time) => sum + time, 0) / times.length),
+      minTime: Math.min(...times),
+      maxTime: Math.max(...times),
+      count: times.length
+    }));
+  };
 
-    // If no clear classification, just show all as invoices
-    if (result.length === 0) {
-      result.push({ name: 'Documents', value: total, color: '#3B82F6' });
-    }
+  const generateStatusDistribution = (documents: Document[]) => {
+    const statusCount = documents.reduce((acc, doc) => {
+      acc[doc.processing_status] = (acc[doc.processing_status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
 
-    return result;
+    const statusColors = {
+      'completed': '#10B981',
+      'successful': '#10B981',
+      'processing': '#F59E0B',
+      'pending': '#6B7280',
+      'failed': '#EF4444',
+      'error': '#EF4444'
+    };
+
+    return Object.entries(statusCount).map(([status, count]) => ({
+      name: status.charAt(0).toUpperCase() + status.slice(1),
+      value: count,
+      color: statusColors[status] || '#6B7280'
+    }));
   };
 
   const exportReport = () => {
+    const filteredDocuments = filterDocuments(allDocuments);
     const reportData = {
       timestamp: new Date().toISOString(),
-      statistics: stats,
-      recentInvoices: recentInvoices.slice(0, 10),
-      monthlyData,
-      documentTypeData,
+      filters: {
+        documentType: selectedDocumentType,
+        language: selectedLanguage
+      },
       summary: {
-        totalDocuments: stats?.total_documents || 0,
-        successRate: stats?.total_documents > 0 
-          ? Math.round((stats.successful_extractions / stats.total_documents) * 100)
-          : 0,
-        avgProcessingTime: '1.3s', // This would come from your stats if available
-        finetuningProgress: stats?.progress_percentage || 0
-      }
+        totalDocuments: filteredDocuments.length,
+        successfulDocuments: filteredDocuments.filter(d => d.processing_status === 'completed' || d.processing_status === 'successful').length,
+        failedDocuments: filteredDocuments.filter(d => d.processing_status === 'failed' || d.processing_status === 'error').length,
+        successRate: filteredDocuments.length > 0 
+          ? Math.round((filteredDocuments.filter(d => d.processing_status === 'completed' || d.processing_status === 'successful').length / filteredDocuments.length) * 100)
+          : 0
+      },
+      chartData: {
+        monthlyData,
+        documentTypeData,
+        languageData,
+        performanceData,
+        statusData
+      },
+      recentDocuments: filteredDocuments.slice(0, 20).map(doc => ({
+        fileName: doc.file_name,
+        type: doc.document_type,
+        language: doc.language,
+        status: doc.processing_status,
+        size: doc.file_size,
+        processedAt: doc.created_at
+      }))
     };
 
     const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `document-extraction-report-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `document-processing-report-${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  const getUniqueDocumentTypes = () => {
+    return [...new Set(allDocuments.map(doc => doc.document_type))];
+  };
+
+  const getUniqueLanguages = () => {
+    return [...new Set(allDocuments.map(doc => doc.language))];
+  };
+
+  const filteredDocuments = filterDocuments(allDocuments);
+  const successfulDocs = filteredDocuments.filter(d => d.processing_status === 'completed' || d.processing_status === 'successful');
+  const failedDocs = filteredDocuments.filter(d => d.processing_status === 'failed' || d.processing_status === 'error');
 
   if (loading) {
     return (
@@ -229,10 +308,10 @@ export const Reports = () => {
         <div>
           <div className="flex items-center mb-4">
             <BarChart3 className="w-12 h-12 text-blue-600 mr-3" />
-            <h1 className="text-4xl font-bold text-gray-900">Reports & Analytics</h1>
+            <h1 className="text-4xl font-bold text-gray-900">Document Processing Analytics</h1>
           </div>
           <p className="text-xl text-gray-600">
-            Comprehensive insights into document processing performance and trends
+            Comprehensive insights into all document processing activities
           </p>
         </div>
         <Button onClick={exportReport} className="flex items-center space-x-2">
@@ -241,68 +320,103 @@ export const Reports = () => {
         </Button>
       </div>
 
-      {/* Key Metrics */}
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Documents</CardTitle>
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{recentInvoices.length || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                +{Math.round(Math.random() * 20)}% from last month
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {stats.total_documents > 0 
-                  ? Math.round((recentInvoices.length / recentInvoices.length) * 100)
-                  : 0}%
-              </div>
-              <p className="text-xs text-muted-foreground">
-                +{(Math.random() * 5).toFixed(1)}% from last month
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Fine-tuning Progress</CardTitle>
-              <Database className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{(recentInvoices.length / 500 )*100 || 0}%</div>
-              <p className="text-xs text-muted-foreground">
-                {(500 - recentInvoices.length) || 0} records remaining
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Avg Processing Time</CardTitle>
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.avg_processing_time || '1.3s'}</div>
-              <p className="text-xs text-muted-foreground">
-                -{(Math.random() * 1).toFixed(1)}s from last month
-              </p>
-            </CardContent>
-          </Card>
+      {/* Filters */}
+      <div className="flex space-x-4 mb-8">
+        <div className="flex items-center space-x-2">
+          <label className="text-sm font-medium">Document Type:</label>
+          <Select value={selectedDocumentType} onValueChange={setSelectedDocumentType}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {getUniqueDocumentTypes().map(type => (
+                <SelectItem key={type} value={type}>
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      )}
 
-      {/* Charts */}
+        <div className="flex items-center space-x-2">
+          <label className="text-sm font-medium">Language:</label>
+          <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Languages</SelectItem>
+              {getUniqueLanguages().map(lang => (
+                <SelectItem key={lang} value={lang}>
+                  {lang.toUpperCase()}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Key Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Documents</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{filteredDocuments.length}</div>
+            <p className="text-xs text-muted-foreground">
+              {allDocuments.length} total across all filters
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {filteredDocuments.length > 0 
+                ? Math.round((successfulDocs.length / filteredDocuments.length) * 100)
+                : 0}%
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {successfulDocs.length} successful, {failedDocs.length} failed
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Document Types</CardTitle>
+            <Database className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{getUniqueDocumentTypes().length}</div>
+            <p className="text-xs text-muted-foreground">
+              Different document types processed
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Languages</CardTitle>
+            <Languages className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{getUniqueLanguages().length}</div>
+            <p className="text-xs text-muted-foreground">
+              Languages supported
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <Card>
           <CardHeader>
@@ -317,6 +431,7 @@ export const Reports = () => {
                 <Tooltip />
                 <Bar dataKey="processed" fill="#3B82F6" name="Processed" />
                 <Bar dataKey="successful" fill="#10B981" name="Successful" />
+                <Bar dataKey="failed" fill="#EF4444" name="Failed" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -349,73 +464,117 @@ export const Reports = () => {
         </Card>
       </div>
 
-      {/* Success Rate Over Time */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle>Success Rate Trend</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={monthlyData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip formatter={(value, name) => {
-                const entry = monthlyData.find(d => d.successful === value);
-                const rate = entry ? ((entry.successful / entry.processed) * 100).toFixed(1) : '0';
-                return [`${rate}%`, 'Success Rate'];
-              }} />
-              <Line 
-                type="monotone" 
-                dataKey="successful" 
-                stroke="#10B981" 
-                strokeWidth={2}
-                dot={{ fill: '#10B981' }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+      {/* Charts Row 2 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Processing Status Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
 
-      {/* Recent Invoices Table */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Language Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={languageData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#8B5CF6" name="Documents" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Processing Performance Chart */}
+      {performanceData.length > 0 && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Processing Step Performance</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={performanceData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="step" />
+                <YAxis />
+                <Tooltip formatter={(value, name) => [`${value}ms`, name]} />
+                <Bar dataKey="avgTime" fill="#06B6D4" name="Avg Time" />
+                <Bar dataKey="maxTime" fill="#EF4444" name="Max Time" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      
+
+      {/* Recent Documents Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Processed Documents ({recentInvoices.length} total)</CardTitle>
+          <CardTitle>Recent Processed Documents ({filteredDocuments.length} total)</CardTitle>
         </CardHeader>
         <CardContent>
-          {recentInvoices.length === 0 ? (
+          {filteredDocuments.length === 0 ? (
             <div className="text-center py-8">
               <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">No processed documents found</p>
+              <p className="text-gray-500">No documents found with current filters</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left p-2">Invoice #</th>
-                    <th className="text-left p-2">Client</th>
-                    <th className="text-left p-2">Amount</th>
-                    <th className="text-left p-2">Date</th>
-                    <th className="text-left p-2">Status</th>
+                    <th className="text-left p-2">File Name</th>
+                    <th className="text-left p-2">Type</th>
+                    <th className="text-left p-2">Language</th>
+                    <th className="text-left p-2">Size</th>
+                    <th className="text-left p-2">Processed</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {recentInvoices.slice(0, 10).map((invoice) => (
-                    <tr key={invoice.id} className="border-b hover:bg-gray-50">
-                      <td className="p-2 font-medium">{invoice.invoice_number || 'N/A'}</td>
-                      <td className="p-2">{invoice.client_name || 'Unknown'}</td>
-                      <td className="p-2">
-                        ${typeof invoice.total === 'number' 
-                          ? invoice.total.toFixed(2) 
-                          : (invoice.total || '0.00')}
+                  {filteredDocuments.slice(0, 20).map((doc) => (
+                    <tr key={doc.id} className="border-b hover:bg-gray-50">
+                      <td className="p-2 font-medium truncate max-w-xs" title={doc.file_name}>
+                        {doc.file_name}
                       </td>
-                      <td className="p-2">{new Date(invoice.created_at).toLocaleDateString()}</td>
                       <td className="p-2">
-                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
-                          Processed
+                        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+                          {doc.document_type}
                         </span>
                       </td>
+                      <td className="p-2">
+                        <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">
+                          {doc.language.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="p-2">{(doc.file_size / 1024).toFixed(1)} KB</td>
+                      
+                      <td className="p-2">{new Date(doc.created_at).toLocaleDateString()}</td>
                     </tr>
                   ))}
                 </tbody>

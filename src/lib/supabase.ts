@@ -1,7 +1,128 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export class DatabaseService {
+  // ... existing methods ...
+
+  async getAllDocuments(limit = 100) {
+    try {
+      const { data, error } = await supabase
+        .from('document_processing')
+        .select(`
+          *,
+          processing_steps (*),
+          ocr_results (*),
+          extracted_invoices (*)
+        `)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting all documents:', error);
+      return { success: false, error };
+    }
+  }
+
+  async getDocumentsByType(documentType: string, limit = 50) {
+    try {
+      const { data, error } = await supabase
+        .from('document_processing')
+        .select(`
+          *,
+          processing_steps (*),
+          ocr_results (*),
+          extracted_invoices (*)
+        `)
+        .eq('document_type', documentType)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting documents by type:', error);
+      return { success: false, error };
+    }
+  }
+
+  async getProcessingStepsAnalytics(limit = 1000) {
+    try {
+      const { data, error } = await supabase
+        .from('processing_steps')
+        .select(`
+          *,
+          document_processing!inner (
+            document_type,
+            language,
+            created_at
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting processing steps analytics:', error);
+      return { success: false, error };
+    }
+  }
+
+  async getDocumentTypeDistribution() {
+    try {
+      const { data, error } = await supabase
+        .from('document_processing')
+        .select('document_type, processing_status')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting document type distribution:', error);
+      return { success: false, error };
+    }
+  }
+
+  async getLanguageDistribution() {
+    try {
+      const { data, error } = await supabase
+        .from('document_processing')
+        .select('language, processing_status')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting language distribution:', error);
+      return { success: false, error };
+    }
+  }
+
+  async getProcessingPerformanceStats() {
+    try {
+      const { data, error } = await supabase
+        .from('processing_steps')
+        .select(`
+          step_name,
+          processing_time_ms,
+          status,
+          created_at,
+          document_processing!inner (document_type)
+        `)
+        .not('processing_time_ms', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1000);
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting processing performance stats:', error);
+      return { success: false, error };
+    }
+  }
+
+  // ... rest of existing methods unchanged ...
   async saveDocumentProcessing(data: {
     fileName: string;
     fileSize: number;
