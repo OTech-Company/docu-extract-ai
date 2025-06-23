@@ -3,7 +3,9 @@ import { FileUpload } from '../components/FileUpload';
 import { InvoiceDisplay } from '../components/InvoiceDisplay';
 import { DocumentTypeSelector } from '../components/DocumentTypeSelector';
 import { LanguageSelector } from '../components/LanguageSelector';
-import { Loader2, AlertCircle, FileText, Database, CheckCircle } from 'lucide-react';
+import { Loader2, AlertCircle, FileText, Database, CheckCircle, Receipt, FileCheck, CreditCard, FileImage, Globe } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { db } from '../lib/supabase';
 import { InvoiceData, ProcessedInvoice, ProcessingStatistics } from '../types';
 
@@ -94,6 +96,38 @@ export const DocumentExtraction = () => {
     }
   };
 
+  const getDocumentTypeIcon = (type: string) => {
+    switch (type) {
+      case 'invoice': return Receipt;
+      case 'receipt': return Receipt;
+      case 'contract': return FileCheck;
+      case 'statement': return CreditCard;
+      default: return FileImage;
+    }
+  };
+
+  const getDocumentTypeDescription = (type: string) => {
+    switch (type) {
+      case 'invoice': return 'Business invoices, bills, and payment requests';
+      case 'receipt': return 'Purchase receipts and transaction records';
+      case 'contract': return 'Legal contracts and agreements';
+      case 'statement': return 'Financial statements and account summaries';
+      default: return 'Other document types';
+    }
+  };
+
+  const getLanguageFlag = (lang: string) => {
+    switch (lang) {
+      case 'english': return '🇺🇸';
+      case 'spanish': return '🇪🇸';
+      case 'french': return '🇫🇷';
+      case 'german': return '🇩🇪';
+      case 'italian': return '🇮🇹';
+      case 'portuguese': return '🇵🇹';
+      default: return '🌐';
+    }
+  };
+
   const processDocument = useCallback(async (file: File) => {
     setIsLoading(true);
     setError(null);
@@ -133,7 +167,7 @@ export const DocumentExtraction = () => {
               {
                 parts: [
                   {
-                    text: `You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. Your JSON object must have exactly the following keys and nested structure (do not add, omit, or change any keys):
+                    text: `You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. You must have exactly the following keys and nested structure (do not add, omit, or change any keys):
                     {
                       "invoice": {
                         "client_name": "<string>",
@@ -312,16 +346,139 @@ export const DocumentExtraction = () => {
         </div>
       )}
 
-      {/* Document Type and Language Selectors */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <DocumentTypeSelector 
-          value={documentType} 
-          onChange={setDocumentType} 
-        />
-        <LanguageSelector 
-          value={language} 
-          onChange={setLanguage} 
-        />
+      {/* Enhanced Document Configuration Section */}
+      <div className="mb-8">
+        <h2 className="text-2xl font-semibold text-gray-900 mb-6">Document Configuration</h2>
+        
+        {/* Document Type Selection */}
+        <div className="mb-6">
+          <div className="flex items-center mb-4">
+            <FileText className="w-6 h-6 text-blue-600 mr-2" />
+            <h3 className="text-lg font-medium text-gray-900">Document Type</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+            {[
+              { value: 'invoice', label: 'Invoice', icon: Receipt, featured: true },
+              { value: 'statement', label: 'Statement', icon: CreditCard, featured: true },
+              { value: 'receipt', label: 'Receipt', icon: Receipt },
+              { value: 'contract', label: 'Contract', icon: FileCheck },
+              { value: 'other', label: 'Other Document', icon: FileImage },
+            ].map((type) => {
+              const IconComponent = type.icon;
+              const isSelected = documentType === type.value;
+              return (
+                <Card 
+                  key={type.value}
+                  className={`cursor-pointer transition-all duration-200 hover:shadow-md ${
+                    isSelected 
+                      ? 'ring-2 ring-blue-500 bg-blue-50 border-blue-300' 
+                      : 'hover:border-gray-300'
+                  } ${type.featured ? 'ring-1 ring-amber-200 bg-gradient-to-br from-amber-50 to-orange-50' : ''}`}
+                  onClick={() => setDocumentType(type.value)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center space-x-3">
+                      <div className={`p-2 rounded-lg ${
+                        isSelected ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        <IconComponent className="w-6 h-6" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <h4 className={`font-medium ${
+                            isSelected ? 'text-blue-900' : 'text-gray-900'
+                          }`}>
+                            {type.label}
+                          </h4>
+                          {type.featured && (
+                            <Badge variant="secondary" className="bg-amber-100 text-amber-800 text-xs">
+                              Featured
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">
+                          {getDocumentTypeDescription(type.value)}
+                        </p>
+                      </div>
+                      {isSelected && (
+                        <CheckCircle className="w-5 h-5 text-blue-600" />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Language Selection */}
+        <div className="mb-6">
+          <div className="flex items-center mb-4">
+            <Globe className="w-6 h-6 text-green-600 mr-2" />
+            <h3 className="text-lg font-medium text-gray-900">Processing Language</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {[
+              { value: 'english', label: 'English', flag: '🇺🇸' },
+              { value: 'spanish', label: 'Spanish', flag: '🇪🇸' },
+              { value: 'french', label: 'French', flag: '🇫🇷' },
+              { value: 'german', label: 'German', flag: '🇩🇪' },
+              { value: 'italian', label: 'Italian', flag: '🇮🇹' },
+              { value: 'portuguese', label: 'Portuguese', flag: '🇵🇹' },
+            ].map((lang) => {
+              const isSelected = language === lang.value;
+              return (
+                <Card 
+                  key={lang.value}
+                  className={`cursor-pointer transition-all duration-200 hover:shadow-sm ${
+                    isSelected 
+                      ? 'ring-2 ring-green-500 bg-green-50 border-green-300' 
+                      : 'hover:border-gray-300'
+                  }`}
+                  onClick={() => setLanguage(lang.value)}
+                >
+                  <CardContent className="p-3">
+                    <div className="text-center">
+                      <div className="text-2xl mb-1">{lang.flag}</div>
+                      <div className={`text-sm font-medium ${
+                        isSelected ? 'text-green-900' : 'text-gray-900'
+                      }`}>
+                        {lang.label}
+                      </div>
+                      {isSelected && (
+                        <CheckCircle className="w-4 h-4 text-green-600 mx-auto mt-1" />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Current Selection Summary */}
+        <Card className="bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-700">Selected:</span>
+                  <Badge variant="outline" className="bg-white">
+                    {React.createElement(getDocumentTypeIcon(documentType), { className: "w-4 h-4 mr-1" })}
+                    {documentType.charAt(0).toUpperCase() + documentType.slice(1)}
+                  </Badge>
+                  <Badge variant="outline" className="bg-white">
+                    <span className="mr-1">{getLanguageFlag(language)}</span>
+                    {language.charAt(0).toUpperCase() + language.slice(1)}
+                  </Badge>
+                </div>
+              </div>
+              <div className="text-sm text-gray-600">
+                Ready to process {documentType} documents in {language}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <FileUpload onFileSelect={processDocument} isLoading={isLoading} />
