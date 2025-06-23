@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,15 +8,29 @@ interface InvoiceDisplayProps {
 }
 
 export const InvoiceDisplay = ({ data }: InvoiceDisplayProps) => {
+  if (!data || !data.invoice || !data.items || !data.subtotal) {
+    return (
+      <div className="p-4 text-red-600 bg-red-50 rounded">
+        Incomplete or invalid invoice data.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 max-h-96 overflow-y-auto">
-      <div className="flex items-center justify-between">
-        <h4 className="text-lg font-semibold text-gray-900">Extracted Data</h4>
-        <Badge variant="secondary" className="bg-green-100 text-green-800">
-          Processed
-        </Badge>
+      {/* Header Section */}
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            Invoice Display
+            <Badge variant="secondary" className="bg-amber-100 text-amber-800 text-xs ml-2">
+              Featured
+            </Badge>
+          </h3>
+          <p className="text-sm text-gray-600 mt-1">Business invoices, bills, and payment requests</p>
+        </div>
+        <Badge variant="secondary" className="bg-green-100 text-green-800 h-fit">Processed</Badge>
       </div>
-
       <div className="grid gap-4">
         {/* Invoice Details */}
         <Card>
@@ -37,7 +50,6 @@ export const InvoiceDisplay = ({ data }: InvoiceDisplayProps) => {
             </div>
           </CardContent>
         </Card>
-
         {/* Items */}
         <Card>
           <CardHeader>
@@ -57,7 +69,6 @@ export const InvoiceDisplay = ({ data }: InvoiceDisplayProps) => {
             </div>
           </CardContent>
         </Card>
-
         {/* Total */}
         <Card>
           <CardContent className="pt-4">

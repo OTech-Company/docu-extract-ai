@@ -8,6 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { db } from '../lib/supabase';
 import { InvoiceData, ProcessedInvoice, ProcessingStatistics } from '../types';
+import { StatementDisplay } from '@/components/StatementDisplay';
+import { ReceiptDisplay } from '../components/ReceiptDisplay';
+import { ContractDisplay } from '../components/ContractDisplay';
+import { OtherDocumentDisplay } from '../components/OtherDocumentDisplay';
 
 const API_KEYS = [
 "AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw",
@@ -121,10 +125,19 @@ if (newData.subtotal) {
 return newData;
 }
 
+const isInvoiceFormat = (data) =>
+  data &&
+  typeof data === 'object' &&
+  data.invoice &&
+  Array.isArray(data.items) &&
+  data.subtotal &&
+  data.payment_instructions;
+
 export const DocumentExtraction = () => {
 const [isLoading, setIsLoading] = useState(false);
 const [error, setError] = useState<string | null>(null);
 const [currentInvoice, setCurrentInvoice] = useState<InvoiceData | null>(null);
+const [currentDocument, setCurrentDocument] = useState<any>(null);
 const [processedInvoices, setProcessedInvoices] = useState<ProcessedInvoice[]>([]);
 const [processingStats, setProcessingStats] = useState<ProcessingStatistics | null>(null);
 const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -222,46 +235,13 @@ reader.onerror = reject;
 reader.readAsDataURL(file);
 });
 
-          const prompt = (PROMPT_TEMPLATES[documentType] || PROMPT_TEMPLATES['other'])(language);
+const prompt = (PROMPT_TEMPLATES[documentType] || PROMPT_TEMPLATES['other'])(language);
 
 const requestBody = {
 contents: [
 {
 parts: [
-                  {
-                    text: `You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. You must have exactly the following keys and nested structure (do not add, omit, or change any keys):
-                    {
-                      "invoice": {
-                        "client_name": "<string>",
-                        "client_address": "<string>",
-                        "seller_name": "<string>",
-                        "seller_address": "<string>",
-                        "invoice_number": "<string>",
-                        "invoice_date": "<string>",
-                        "due_date": "<string>"
-                      },
-                      "items": [
-                        {
-                          "description": "<string>",
-                          "quantity": "<string>",
-                          "total_price": "<string>"
-                        }
-                      ],
-                      "subtotal": {
-                        "tax": "<string>",
-                        "discount": "<string>",
-                        "total": "<string>"
-                      },
-                      "payment_instructions": {
-                        "due_date": "<string>",
-                        "bank_name": "<string>",
-                        "account_number": "<string>",
-                        "payment_method": "<string>"
-                      }
-                    }
-                    IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. If a value is missing, use an empty string. Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes.`
-                  },
-                  { text: prompt },
+{ text: prompt },
 {
 inline_data: {
 mime_type: "image/jpeg",
@@ -329,12 +309,18 @@ setSaveStatus('saved');
 await db.updateStatistics();
 await loadProcessingStats();
 await loadRecentInvoices();
+
+if (isInvoiceFormat(fixedData)) {
+setCurrentInvoice(fixedData);
+setCurrentDocument(null);
+} else {
+setCurrentInvoice(null);
+setCurrentDocument(fixedData);
+}
 } else {
 setSaveStatus('error');
 setError('Failed to save to database: ' + JSON.stringify(saveResult.error || 'Unknown error'));
 }
-
-setCurrentInvoice(data);
 } catch (err) {
 setSaveStatus('error');
 setError(err instanceof Error ? err.message : 'An error occurred');
@@ -578,10 +564,24 @@ Ready to process {documentType} documents in {language}
 </div>
 
 {/* Current Invoice Display */}
-{currentInvoice && !isLoading && (
-<div className="mt-8">
-<InvoiceDisplay data={currentInvoice} />
-</div>
+{!isLoading && (
+  <div className="mt-8">
+    {documentType === 'invoice' && currentInvoice && (
+      <InvoiceDisplay data={currentInvoice} />
+    )}
+    {documentType === 'statement' && currentDocument && (
+      <StatementDisplay data={currentDocument} />
+    )}
+    {documentType === 'receipt' && currentDocument && (
+      <ReceiptDisplay data={currentDocument} />
+    )}
+    {documentType === 'contract' && currentDocument && (
+      <ContractDisplay data={currentDocument} />
+    )}
+    {documentType === 'other' && currentDocument && (
+      <OtherDocumentDisplay data={currentDocument} />
+    )}
+  </div>
 )}
 
 {/* Recent Documents */}
