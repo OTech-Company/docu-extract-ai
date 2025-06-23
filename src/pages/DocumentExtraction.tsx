@@ -1,59 +1,36 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { FileUpload } from '../components/FileUpload';
+import { InvoiceDisplay } from '../components/InvoiceDisplay';
+import { DocumentTypeSelector } from '../components/DocumentTypeSelector';
+import { LanguageSelector } from '../components/LanguageSelector';
+import { Loader2, AlertCircle, FileText, Database, CheckCircle, Receipt, FileCheck, CreditCard, FileImage, Globe } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { toast } from "@/components/ui/use-toast"
-import { ProcessingStep, OCRModel } from '@/types/processing';
-import { GenericDocumentDisplay } from '@/components/GenericDocumentDisplay';
-import { Checkbox } from "@/components/ui/checkbox"
-import { db } from '@/lib/supabase';
+import { db } from '../lib/supabase';
+import { InvoiceData, ProcessedInvoice, ProcessingStatistics } from '../types';
+import { StatementDisplay } from '@/components/StatementDisplay';
+import { ReceiptDisplay } from '../components/ReceiptDisplay';
+import { ContractDisplay } from '../components/ContractDisplay';
+import { OtherDocumentDisplay } from '../components/OtherDocumentDisplay';
 
-interface DocumentProcessingState {
-  documentId?: string;
-  fileName: string;
-  fileSize: number;
-  documentType: string;
-  language: string;
-  status: 'uploading' | 'preprocessing' | 'ocr' | 'extraction' | 'validation' | 'completed' | 'error';
-  steps: ProcessingStep[];
-  ocrResults: Record<string, any>;
-  extractedData?: any;
-  validationResults?: any;
-}
-
-const initialProcessingState: DocumentProcessingState = {
-  fileName: '',
-  fileSize: 0,
-  documentType: '',
-  language: '',
-  status: 'uploading',
-  steps: [],
-  ocrResults: {},
-  extractedData: undefined,
-  validationResults: undefined
-};
-
-const initialOcrModels: OCRModel[] = [
-  { name: 'tesseract', displayName: 'Tesseract OCR', description: 'Open source OCR engine', isActive: true },
-  { name: 'easyocr', displayName: 'EasyOCR', description: 'Easy to use OCR with multiple languages', isActive: false },
-  { name: 'aws_textract', displayName: 'AWS Textract', description: 'Amazon\'s cloud-based OCR service', isActive: false },
+const API_KEYS = [
+"AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw",
+"AIzaSyBFTcj5Mbns1Eej8xMuVM-T98I-iS_BxnE",
+"AIzaSyCKJ29ZXvolRvFYvaGtdyTX5mhbELwHCxg",
+"AIzaSyBxvMkfwDONvjf2zQz-YmRG5Nm4YLNdo7M",
+"AIzaSyAkyi-DUCnwKYCxwn62fr80FbFvG7r2Yro",
+"AIzaSyCINwfoLC1CfitEns0oHRE63L-eP_L1uIc",
+"AIzaSyAZUMqB4tSfrw5IDd-hliHsZrChiL21QnQ",
+"AIzaSyBKMSM4pPxkrGVDT_Tz2dvxIRM7QPrdykU",
+"AIzaSyAylgpD2TGbLvXt5Wh-qMhe7B-zn3sXK2s",
+"AIzaSyCy7NppzTrbrxSfPS8Or2X2ya62JMRwn8E"
 ];
 
-const initialLlmModels = [
-  { name: 'gpt-3.5-turbo', displayName: 'GPT 3.5 Turbo', description: 'Fast and efficient model', isActive: true },
-  { name: 'gpt-4', displayName: 'GPT 4', description: 'More accurate and powerful model', isActive: false },
-  { name: 'claude-v1', displayName: 'Claude V1', description: 'Anthropic\'s Claude model', isActive: false },
-];
-
-// Template responses for different document types
-const getDocumentTemplate = (documentType: string) => {
-  const templates = {
-    invoice: {
+const PROMPT_TEMPLATES: Record<string, (lang: string) => string> = {
+  invoice: (lang) => `
+    You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. 
+    You must have exactly the following keys and nested structure (do not add, omit, or change any keys):
+    {
       "invoice": {
         "client_name": "<string>",
         "client_address": "<string>",
@@ -67,7 +44,6 @@ const getDocumentTemplate = (documentType: string) => {
         {
           "description": "<string>",
           "quantity": "<string>",
-          "unit_price": "<string>",
           "total_price": "<string>"
         }
       ],
@@ -82,620 +58,566 @@ const getDocumentTemplate = (documentType: string) => {
         "account_number": "<string>",
         "payment_method": "<string>"
       }
-    },
-    receipt: {
-      "receipt": {
-        "merchant_name": "<string>",
-        "merchant_address": "<string>",
-        "receipt_number": "<string>",
-        "transaction_date": "<string>",
-        "transaction_time": "<string>"
-      },
+    }
+    IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. 
+    If a value is missing, use an empty string. Process this invoice document in ${lang} language. 
+    All property names and string values must be enclosed in double quotes.
+  `,
+  receipt: (lang) => `
+    Output a valid JSON object for a receipt with the following structure:
+    {
+      "store_name": "<string>",
+      "store_address": "<string>",
+      "date": "<string>",
       "items": [
         {
-          "description": "<string>",
+          "name": "<string>",
           "quantity": "<string>",
-          "unit_price": "<string>",
-          "total_price": "<string>"
+          "price": "<string>"
         }
       ],
-      "payment": {
-        "subtotal": "<string>",
-        "tax": "<string>",
-        "discount": "<string>",
-        "total": "<string>",
-        "payment_method": "<string>",
-        "card_last_four": "<string>"
-      }
-    },
-    contract: {
-      "contract": {
-        "contract_title": "<string>",
-        "contract_number": "<string>",
-        "effective_date": "<string>",
-        "expiration_date": "<string>",
-        "contract_type": "<string>"
-      },
-      "parties": [
-        {
-          "party_type": "<string>",
-          "company_name": "<string>",
-          "contact_person": "<string>",
-          "address": "<string>",
-          "phone": "<string>",
-          "email": "<string>"
-        }
-      ],
-      "terms": {
-        "payment_terms": "<string>",
-        "delivery_terms": "<string>",
-        "cancellation_policy": "<string>",
-        "liability_clauses": "<string>"
-      },
-      "financial": {
-        "contract_value": "<string>",
-        "currency": "<string>",
-        "payment_schedule": "<string>"
-      }
-    },
-    other: {
-      "document": {
-        "document_type": "<string>",
-        "document_title": "<string>",
-        "document_date": "<string>",
-        "document_number": "<string>"
-      },
-      "content": {
-        "main_content": "<string>",
-        "key_information": "<array>",
-        "important_dates": "<array>",
-        "contact_information": "<string>"
-      },
-      "metadata": {
-        "language": "<string>",
-        "page_count": "<string>",
-        "document_format": "<string>"
-      }
+      "total": "<string>"
     }
-  };
-  
-  return templates[documentType as keyof typeof templates] || templates.other;
+    Extract all fields from the image. Use ${lang} language for any text values.
+  `,
+  // Add more templates for 'contract', 'statement', 'other' as needed
+  other: (lang) => `
+    Output a valid JSON object with all structured data you can extract from the document image. Use ${lang} language for any text values.
+  `
 };
 
-const getLLMPrompt = (documentType: string, language: string) => {
-  const template = getDocumentTemplate(documentType);
-  
-  return `Extract ${documentType} data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object:
+// Recursively convert empty string date fields to null within InvoiceData structure
+function fixDatesInInvoiceData(data: InvoiceData): InvoiceData {
+const newData = { ...data };
 
-${JSON.stringify(template, null, 2)}
+// Handle top-level invoice dates
+if (newData.invoice) {
+if (typeof newData.invoice.invoice_date === 'string' && newData.invoice.invoice_date.trim() === '') {
+newData.invoice.invoice_date = null;
+}
+if (typeof newData.invoice.due_date === 'string' && newData.invoice.due_date.trim() === '') {
+newData.invoice.due_date = null;
+}
+}
 
-Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes. Extract all available information and populate the fields accordingly. If a field is not found in the document, use an empty string "".`;
-};
+// Handle payment_instructions due_date
+if (newData.payment_instructions) {
+if (typeof newData.payment_instructions.due_date === 'string' && newData.payment_instructions.due_date.trim() === '') {
+newData.payment_instructions.due_date = null;
+}
+}
+
+// Handle items array - assuming no dates directly in items, but good to show pattern
+if (Array.isArray(newData.items)) {
+newData.items = newData.items.map(item => {
+// If items had nested date objects, you'd recurse here
+return item;
+});
+}
+
+// No dates expected in subtotal directly, but for completeness
+if (newData.subtotal) {
+// if (typeof newData.subtotal.some_date_field === 'string' && newData.subtotal.some_date_field.trim() === '') {
+//   newData.subtotal.some_date_field = null;
+// }
+}
+
+return newData;
+}
+
+const isInvoiceFormat = (data) =>
+  data &&
+  typeof data === 'object' &&
+  data.invoice &&
+  Array.isArray(data.items) &&
+  data.subtotal &&
+  data.payment_instructions;
 
 export const DocumentExtraction = () => {
-  const [file, setFile] = useState<File | null>(null);
-  const [documentType, setDocumentType] = useState('');
-  const [language, setLanguage] = useState('en');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processingState, setProcessingState] = useState<DocumentProcessingState>(initialProcessingState);
-  const [ocrText, setOcrText] = useState('');
-  const [activeOcrModels, setActiveOcrModels] = useState<OCRModel[]>(initialOcrModels);
-  const [llmModels, setLlmModels] = useState(initialLlmModels);
+const [isLoading, setIsLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
+const [currentInvoice, setCurrentInvoice] = useState<InvoiceData | null>(null);
+const [currentDocument, setCurrentDocument] = useState<any>(null);
+const [processedInvoices, setProcessedInvoices] = useState<ProcessedInvoice[]>([]);
+const [processingStats, setProcessingStats] = useState<ProcessingStatistics | null>(null);
+const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+const [documentType, setDocumentType] = useState('invoice');
+const [language, setLanguage] = useState('english');
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
-    }
-  };
+useEffect(() => {
+loadProcessingStats();
+loadRecentInvoices();
+}, []);
 
-  const handleDocumentTypeChange = (value: string) => {
-    setDocumentType(value);
-  };
+const loadProcessingStats = async () => {
+const result = await db.getProcessingStatistics();
+if (result.success) {
+setProcessingStats(result.data);
+}
+};
 
-  const handleLanguageChange = (value: string) => {
-    setLanguage(value);
-  };
+const loadRecentInvoices = async () => {
+const result = await db.getRecentInvoices(10);
+if (result.success) {
+console.log('Raw data from db.getRecentInvoices:', result.data);
+// Add timestamp fallback for database records that don't have it
+const invoicesWithTimestamp = (result.data || []).map(invoice => ({
+...invoice,
+timestamp: Date.now()
+}));
+setProcessedInvoices(invoicesWithTimestamp);
+}
+};
 
-  const handleOcrModelToggle = (modelName: string) => {
-    setActiveOcrModels(prevModels =>
-      prevModels.map(model =>
-        model.name === modelName ? { ...model, isActive: !model.isActive } : model
-      )
-    );
-  };
+const getDocumentTypeIcon = (type: string) => {
+switch (type) {
+case 'invoice': return Receipt;
+case 'receipt': return Receipt;
+case 'contract': return FileCheck;
+case 'statement': return CreditCard;
+default: return FileImage;
+}
+};
 
-  const handleLlmModelToggle = (modelName: string) => {
-    setLlmModels(prevModels =>
-      prevModels.map(model =>
-        model.name === modelName ? { ...model, isActive: !model.isActive } : model
-      )
-    );
-  };
+const getDocumentTypeDescription = (type: string) => {
+switch (type) {
+case 'invoice': return 'Business invoices, bills, and payment requests';
+case 'receipt': return 'Purchase receipts and transaction records';
+case 'contract': return 'Legal contracts and agreements';
+case 'statement': return 'Financial statements and account summaries';
+default: return 'Other document types';
+}
+};
 
-  const processDocument = async () => {
-    if (!file || !documentType || !language) {
-      toast({
-        title: "Missing Information",
-        description: "Please select a file, document type, and language.",
-        variant: "destructive",
-      });
-      return;
-    }
+const getLanguageFlag = (lang: string) => {
+switch (lang) {
+case 'english': return '🇺🇸';
+case 'spanish': return '🇪🇸';
+case 'french': return '🇫🇷';
+case 'german': return '🇩🇪';
+case 'italian': return '🇮🇹';
+case 'portuguese': return '🇵🇹';
+default: return '🌐';
+}
+};
 
-    setIsProcessing(true);
-    setProcessingState({
-      documentId: undefined,
-      fileName: file.name,
-      fileSize: file.size,
-      documentType,
-      language,
-      status: 'uploading',
-      steps: [],
-      ocrResults: {},
-      extractedData: undefined,
-      validationResults: undefined
-    });
+const processDocument = useCallback(async (file: File) => {
+setIsLoading(true);
+setError(null);
+setSaveStatus('idle');
+let currentKeyIndex = 0;
 
-    try {
-      // Step 1: Save document processing record
-      updateStep('document_save', 'processing', 'Saving document information...');
-      
-      const docResult = await db.saveDocumentProcessing({
-        fileName: file.name,
-        fileSize: file.size,
-        documentType,
-        language
-      });
+try {
+// Save document processing record
+const docResult = await db.saveDocumentProcessing({
+fileName: file.name,
+fileSize: file.size,
+documentType,
+language
+});
 
-      if (!docResult.success) {
-        throw new Error('Failed to save document information');
-      }
+if (!docResult.success) {
+throw new Error('Failed to save document record');
+}
 
-      const documentId = docResult.data.id;
-      setProcessingState(prev => ({ ...prev, documentId, status: 'preprocessing' }));
-      updateStep('document_save', 'completed', 'Document information saved');
+const documentId = docResult.data.id;
 
-      // Step 2: OCR Processing with multiple models
-      updateStep('ocr_processing', 'processing', 'Performing OCR with multiple models...');
-      
-      const ocrModels = activeOcrModels.filter(model => model.isActive);
-      const ocrResults: Record<string, any> = {};
-      
-      for (const model of ocrModels) {
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('model', model.name);
+const processWithApiKey = async (apiKey: string) => {
+try {
+// Convert image to base64
+const base64Image = await new Promise<string>((resolve, reject) => {
+const reader = new FileReader();
+reader.onload = () => {
+const base64 = (reader.result as string).split(',')[1];
+resolve(base64);
+};
+reader.onerror = reject;
+reader.readAsDataURL(file);
+});
 
-          const ocrResponse = await fetch('http://localhost:5000/api/ocr/extract', {
-            method: 'POST',
-            body: formData,
-          });
+const prompt = (PROMPT_TEMPLATES[documentType] || PROMPT_TEMPLATES['other'])(language);
 
-          if (!ocrResponse.ok) {
-            throw new Error(`OCR failed for ${model.name}`);
-          }
+const requestBody = {
+contents: [
+{
+parts: [
+{ text: prompt },
+{
+inline_data: {
+mime_type: "image/jpeg",
+data: base64Image
+}
+}
+]
+}
+]
+};
 
-          const ocrData = await ocrResponse.json();
-          ocrResults[model.name] = {
-            text: ocrData.text,
-            confidence: ocrData.confidence,
-            error: null
-          };
+const response = await fetch(
+`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+{
+method: 'POST',
+headers: {
+'Content-Type': 'application/json',
+},
+body: JSON.stringify(requestBody)
+}
+);
 
-          // Save OCR result to database
-          await db.saveOCRResult({
-            documentId,
-            ocrModel: model.name,
-            extractedText: ocrData.text,
-            confidenceScore: ocrData.confidence,
-            processingTimeMs: ocrData.processing_time || 0
-          });
+if (!response.ok) {
+if (response.status === 403 || response.status === 429) {
+if (currentKeyIndex < API_KEYS.length - 1) {
+currentKeyIndex++;
+return processWithApiKey(API_KEYS[currentKeyIndex]);
+}
+}
+throw new Error('Failed to process document');
+}
 
-          // Save processing step
-          await db.saveProcessingStep({
-            documentId,
-            stepName: `OCR_${model.name}`,
-            stepOrder: ocrModels.indexOf(model) + 1,
-            status: 'completed',
-            outputData: ocrData,
-            processingTimeMs: ocrData.processing_time || 0,
-            modelUsed: model.name,
-            confidenceScore: ocrData.confidence
-          });
+const result = await response.json();
+console.log('Gemini API raw response:', result);
+const jsonStr = result.candidates[0].content.parts[0].text;
+const cleanedJsonStr = jsonStr
+.replace(/```json[\s\S]*?({[\s\S]*})[\s\S]*?```/i, '$1')
+.replace(/```[\s\S]*?({[\s\S]*})[\s\S]*?```/g, '$1')
+.replace(/^[\s`]+|[\s`]+$/g, '')
+.replace(/^json\s*/i, '')
+.trim();
+console.log('Cleaned JSON string:', cleanedJsonStr);
+let data: InvoiceData;
+try {
+data = JSON.parse(cleanedJsonStr);
+console.log('Parsed InvoiceData:', data);
+} catch (parseErr) {
+setError('Failed to parse JSON: ' + (parseErr instanceof Error ? parseErr.message : String(parseErr)));
+setIsLoading(false);
+return;
+}
 
-        } catch (error: any) {
-          console.error(`OCR failed for ${model.name}:`, error);
-          ocrResults[model.name] = {
-            text: '',
-            confidence: 0,
-            error: error.message
-          };
+const fixedData = fixDatesInInvoiceData(data);
+console.log('Fixed InvoiceData (empty dates should be null):', fixedData);
 
-          // Save failed processing step
-          await db.saveProcessingStep({
-            documentId,
-            stepName: `OCR_${model.name}`,
-            stepOrder: ocrModels.indexOf(model) + 1,
-            status: 'failed',
-            errorMessage: error.message,
-            modelUsed: model.name
-          });
-        }
-      }
+// Save to database
+setSaveStatus('saving');
+const saveResult = await db.saveExtractedInvoice({
+documentId,
+...fixedData
+});
 
-      setProcessingState(prev => ({ ...prev, ocrResults, status: 'extraction' }));
-      updateStep('ocr_processing', 'completed', 'OCR processing completed');
+if (saveResult.success) {
+setSaveStatus('saved');
+await db.updateStatistics();
+await loadProcessingStats();
+await loadRecentInvoices();
 
-      // Step 3: Select best OCR result using majority voting or highest confidence
-      const bestOcrResult = selectBestOcrResult(ocrResults);
-      if (!bestOcrResult || !bestOcrResult.text) {
-        throw new Error('All OCR models failed to extract text');
-      }
+if (isInvoiceFormat(fixedData)) {
+setCurrentInvoice(fixedData);
+setCurrentDocument(null);
+} else {
+setCurrentInvoice(null);
+setCurrentDocument(fixedData);
+}
+} else {
+setSaveStatus('error');
+setError('Failed to save to database: ' + JSON.stringify(saveResult.error || 'Unknown error'));
+}
+} catch (err) {
+setSaveStatus('error');
+setError(err instanceof Error ? err.message : 'An error occurred');
+}
+};
 
-      // Step 4: LLM Processing for data extraction
-      updateStep('llm_processing', 'processing', 'Extracting structured data...');
+await processWithApiKey(API_KEYS[currentKeyIndex]);
+} catch (err) {
+setError(err instanceof Error ? err.message : 'An error occurred');
+} finally {
+setIsLoading(false);
+}
+}, [documentType, language]);
 
-      const activeLlms = llmModels.filter(model => model.isActive);
-      const llmResults: any[] = [];
+return (
+<div className="max-w-7xl mx-auto p-6">
+<div className="text-center mb-8">
+<div className="flex items-center justify-center mb-4">
+<FileText className="w-12 h-12 text-blue-600 mr-3" />
+<h1 className="text-4xl font-bold text-gray-900">Document Data Extraction</h1>
+</div>
+<p className="text-xl text-gray-600 max-w-2xl mx-auto">
+Upload documents and extract structured data using advanced AI vision technology
+</p>
+</div>
 
-      for (const llm of activeLlms) {
-        try {
-          const llmPrompt = getLLMPrompt(documentType, language);
-          
-          const llmResponse = await fetch('http://localhost:5000/api/llm/extract', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: bestOcrResult.text,
-              model: llm.name,
-              document_type: documentType,
-              language: language,
-              prompt: llmPrompt
-            }),
-          });
+{/* Processing Statistics */}
+{processingStats && (
+<div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow-md p-6 mb-8">
+<div className="flex items-center justify-between mb-4">
+<div className="flex items-center">
+<Database className="w-6 h-6 text-blue-600 mr-3" />
+<h2 className="text-xl font-semibold text-gray-900">Processing Statistics</h2>
+</div>
+<div className="text-right">
+<div className="text-2xl font-bold text-blue-600">
+{processingStats.total_documents}/{processingStats.fine_tuning_threshold}
+</div>
+<div className="text-sm text-gray-600">Documents processed</div>
+</div>
+</div>
 
-          if (!llmResponse.ok) {
-            throw new Error(`LLM extraction failed for ${llm.name}`);
-          }
+<div className="mb-4">
+<div className="flex justify-between text-sm text-gray-600 mb-1">
+<span>Progress to fine-tuning threshold</span>
+<span>{processingStats.progress_percentage}%</span>
+</div>
+<div className="w-full bg-gray-200 rounded-full h-3">
+<div 
+className="bg-gradient-to-r from-blue-500 to-indigo-500 h-3 rounded-full transition-all duration-300"
+style={{ width: `${Math.min(processingStats.progress_percentage, 100)}%` }}
+></div>
+</div>
+</div>
 
-          const llmData = await llmResponse.json();
-          llmResults.push({
-            model: llm.name,
-            data: llmData.extracted_data,
-            confidence: llmData.confidence || 0.8
-          });
+<div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+<div className="bg-white rounded-md p-3">
+<div className="font-medium text-gray-900">Total Documents</div>
+<div className="text-2xl font-bold text-blue-600">{processingStats.total_documents}</div>
+</div>
+<div className="bg-white rounded-md p-3">
+<div className="font-medium text-gray-900">Records Remaining</div>
+<div className="text-2xl font-bold text-orange-600">{processingStats.records_remaining}</div>
+</div>
+<div className="bg-white rounded-md p-3">
+<div className="font-medium text-gray-900">Fine-tuning Status</div>
+<div className={`text-lg font-bold ${processingStats.fine_tuning_ready ? 'text-green-600' : 'text-gray-500'}`}>
+{processingStats.fine_tuning_ready ? 'Ready' : 'Not Ready'}
+</div>
+</div>
+</div>
+</div>
+)}
 
-          // Save processing step
-          await db.saveProcessingStep({
-            documentId,
-            stepName: `LLM_${llm.name}`,
-            stepOrder: 10 + activeLlms.indexOf(llm),
-            status: 'completed',
-            inputData: { text: bestOcrResult.text.substring(0, 1000) }, // Truncate for storage
-            outputData: llmData,
-            modelUsed: llm.name,
-            confidenceScore: llmData.confidence || 0.8
-          });
+{/* Enhanced Document Configuration Section */}
+<div className="mb-8">
+<h2 className="text-2xl font-semibold text-gray-900 mb-6">Document Configuration</h2>
 
-        } catch (error: any) {
-          console.error(`LLM extraction failed for ${llm.name}:`, error);
-          
-          // Save failed processing step
-          await db.saveProcessingStep({
-            documentId,
-            stepName: `LLM_${llm.name}`,
-            stepOrder: 10 + activeLlms.indexOf(llm),
-            status: 'failed',
-            errorMessage: error.message,
-            modelUsed: llm.name
-          });
-        }
-      }
+{/* Document Type Selection */}
+<div className="mb-6">
+<div className="flex items-center mb-4">
+<FileText className="w-6 h-6 text-blue-600 mr-2" />
+<h3 className="text-lg font-medium text-gray-900">Document Type</h3>
+</div>
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+{[
+{ value: 'invoice', label: 'Invoice', icon: Receipt, featured: true },
+{ value: 'statement', label: 'Statement', icon: CreditCard, featured: true },
+{ value: 'receipt', label: 'Receipt', icon: Receipt },
+{ value: 'contract', label: 'Contract', icon: FileCheck },
+{ value: 'other', label: 'Other Document', icon: FileImage },
+].map((type) => {
+const IconComponent = type.icon;
+const isSelected = documentType === type.value;
+return (
+<Card 
+key={type.value}
+className={`cursor-pointer transition-all duration-200 hover:shadow-md ${
+                   isSelected 
+                     ? 'ring-2 ring-blue-500 bg-blue-50 border-blue-300' 
+                     : 'hover:border-gray-300'
+                 } ${type.featured ? 'ring-1 ring-amber-200 bg-gradient-to-br from-amber-50 to-orange-50' : ''}`}
+onClick={() => setDocumentType(type.value)}
+>
+<CardContent className="p-4">
+<div className="flex items-center space-x-3">
+<div className={`p-2 rounded-lg ${
+                       isSelected ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                     }`}>
+<IconComponent className="w-6 h-6" />
+</div>
+<div className="flex-1">
+<div className="flex items-center space-x-2">
+<h4 className={`font-medium ${
+                           isSelected ? 'text-blue-900' : 'text-gray-900'
+                         }`}>
+{type.label}
+</h4>
+{type.featured && (
+<Badge variant="secondary" className="bg-amber-100 text-amber-800 text-xs">
+Featured
+</Badge>
+)}
+</div>
+<p className="text-sm text-gray-600 mt-1">
+{getDocumentTypeDescription(type.value)}
+</p>
+</div>
+{isSelected && (
+<CheckCircle className="w-5 h-5 text-blue-600" />
+)}
+</div>
+</CardContent>
+</Card>
+);
+})}
+</div>
+</div>
 
-      if (llmResults.length === 0) {
-        throw new Error('All LLM models failed to extract data');
-      }
+{/* Language Selection */}
+<div className="mb-6">
+<div className="flex items-center mb-4">
+<Globe className="w-6 h-6 text-green-600 mr-2" />
+<h3 className="text-lg font-medium text-gray-900">Processing Language</h3>
+</div>
+<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+{[
+{ value: 'english', label: 'English', flag: '🇺🇸' },
+{ value: 'spanish', label: 'Spanish', flag: '🇪🇸' },
+{ value: 'french', label: 'French', flag: '🇫🇷' },
+{ value: 'german', label: 'German', flag: '🇩🇪' },
+{ value: 'italian', label: 'Italian', flag: '🇮🇹' },
+{ value: 'portuguese', label: 'Portuguese', flag: '🇵🇹' },
+].map((lang) => {
+const isSelected = language === lang.value;
+return (
+<Card 
+key={lang.value}
+className={`cursor-pointer transition-all duration-200 hover:shadow-sm ${
+                   isSelected 
+                     ? 'ring-2 ring-green-500 bg-green-50 border-green-300' 
+                     : 'hover:border-gray-300'
+                 }`}
+onClick={() => setLanguage(lang.value)}
+>
+<CardContent className="p-3">
+<div className="text-center">
+<div className="text-2xl mb-1">{lang.flag}</div>
+<div className={`text-sm font-medium ${
+                       isSelected ? 'text-green-900' : 'text-gray-900'
+                     }`}>
+{lang.label}
+</div>
+{isSelected && (
+<CheckCircle className="w-4 h-4 text-green-600 mx-auto mt-1" />
+)}
+</div>
+</CardContent>
+</Card>
+);
+})}
+</div>
+</div>
 
-      // Step 5: Majority voting for best extraction result
-      const finalResult = performMajorityVoting(llmResults);
-      setProcessingState(prev => ({ ...prev, extractedData: finalResult, status: 'validation' }));
-      updateStep('llm_processing', 'completed', 'Data extraction completed');
+{/* Current Selection Summary */}
+<Card className="bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200">
+<CardContent className="p-4">
+<div className="flex items-center justify-between">
+<div className="flex items-center space-x-4">
+<div className="flex items-center space-x-2">
+<span className="text-sm font-medium text-gray-700">Selected:</span>
+<Badge variant="outline" className="bg-white">
+{React.createElement(getDocumentTypeIcon(documentType), { className: "w-4 h-4 mr-1" })}
+{documentType.charAt(0).toUpperCase() + documentType.slice(1)}
+</Badge>
+<Badge variant="outline" className="bg-white">
+<span className="mr-1">{getLanguageFlag(language)}</span>
+{language.charAt(0).toUpperCase() + language.slice(1)}
+</Badge>
+</div>
+</div>
+<div className="text-sm text-gray-600">
+Ready to process {documentType} documents in {language}
+</div>
+</div>
+</CardContent>
+</Card>
+</div>
 
-      // Step 6: Save extracted data to database
-      updateStep('data_saving', 'processing', 'Saving extracted data...');
+<FileUpload onFileSelect={processDocument} isLoading={isLoading} />
 
-      if (documentType === 'invoice' && isInvoiceData(finalResult)) {
-        const saveResult = await db.saveExtractedInvoice({
-          documentId,
-          ...finalResult
-        });
+{/* Status Messages */}
+<div className="flex justify-center mt-6 space-x-4">
+{isLoading && (
+<div className="flex items-center text-blue-600">
+<Loader2 className="w-5 h-5 animate-spin mr-2" />
+<span>Processing document...</span>
+</div>
+)}
 
-        if (!saveResult.success) {
-          throw new Error('Failed to save extracted invoice data');
-        }
-      }
+{saveStatus === 'saving' && (
+<div className="flex items-center text-orange-600">
+<Loader2 className="w-5 h-5 animate-spin mr-2" />
+<span>Saving to database...</span>
+</div>
+)}
 
-      // Update statistics
-      await db.updateStatistics();
+{saveStatus === 'saved' && (
+<div className="flex items-center text-green-600">
+<CheckCircle className="w-5 h-5 mr-2" />
+<span>Successfully saved to database!</span>
+</div>
+)}
 
-      updateStep('data_saving', 'completed', 'Data saved successfully');
-      setProcessingState(prev => ({ ...prev, status: 'completed' }));
+{(error || saveStatus === 'error') && (
+<div className="flex items-center text-red-600">
+<AlertCircle className="w-5 h-5 mr-2" />
+<span>{error || 'Failed to save to database'}</span>
+</div>
+)}
+</div>
 
-      toast({
-        title: "Processing Complete",
-        description: "Document has been successfully processed and saved.",
-      });
+{/* Current Invoice Display */}
+{!isLoading && (
+  <div className="mt-8">
+    {documentType === 'invoice' && currentInvoice && (
+      <InvoiceDisplay data={currentInvoice} />
+    )}
+    {documentType === 'statement' && currentDocument && (
+      <StatementDisplay data={currentDocument} />
+    )}
+    {documentType === 'receipt' && currentDocument && (
+      <ReceiptDisplay data={currentDocument} />
+    )}
+    {documentType === 'contract' && currentDocument && (
+      <ContractDisplay data={currentDocument} />
+    )}
+    {documentType === 'other' && currentDocument && (
+      <OtherDocumentDisplay data={currentDocument} />
+    )}
+  </div>
+)}
 
-    } catch (error: any) {
-      console.error('Processing failed:', error);
-      
-      // Update document status to failed
-      if (processingState.documentId) {
-        await db.updateDocumentStatus(
-          processingState.documentId, 
-          'failed', 
-          'failed', 
-          error.message
-        );
-      }
-
-      updateStep('error', 'error', `Processing failed: ${error.message}`);
-      setProcessingState(prev => ({ ...prev, status: 'error' }));
-      
-      toast({
-        title: "Processing Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const selectBestOcrResult = (ocrResults: Record<string, any>) => {
-    const validResults = Object.values(ocrResults).filter(
-      (result: any) => result && result.text && !result.error
-    );
-
-    if (validResults.length === 0) return null;
-
-    // Return the result with highest confidence
-    return validResults.reduce((best: any, current: any) => 
-      current.confidence > best.confidence ? current : best
-    );
-  };
-
-  const performMajorityVoting = (llmResults: any[]) => {
-    if (llmResults.length === 1) {
-      return llmResults[0].data;
-    }
-
-    // For now, return the result with highest confidence
-    // In a real implementation, you would compare field values across results
-    const bestResult = llmResults.reduce((best, current) => 
-      current.confidence > best.confidence ? current : best
-    );
-
-    return bestResult.data;
-  };
-
-  const isInvoiceData = (data: any): boolean => {
-    return data && (
-      data.invoice || 
-      data.client_name || 
-      data.total || 
-      data.invoice_number
-    );
-  };
-
-  const updateStep = (stepName: string, status: 'pending' | 'processing' | 'completed' | 'error', output?: string) => {
-    setProcessingState(prev => {
-      const existingStepIndex = prev.steps.findIndex(step => step.name === stepName);
-      const newStep = {
-        id: stepName,
-        name: stepName,
-        status,
-        output,
-        processingTime: status === 'completed' ? Math.random() * 2000 + 500 : undefined
-      };
-
-      if (existingStepIndex >= 0) {
-        const newSteps = [...prev.steps];
-        newSteps[existingStepIndex] = newStep;
-        return { ...prev, steps: newSteps };
-      } else {
-        return { ...prev, steps: [...prev.steps, newStep] };
-      }
-    });
-  };
-
-  return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Document Information Extraction</h1>
-      
-      {/* Document Template Display */}
-      {documentType && (
-        <Card className="mb-4">
-          <CardHeader>
-            <CardTitle>Expected Output Template for {documentType}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="bg-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-96">
-              {JSON.stringify(getDocumentTemplate(documentType), null, 2)}
-            </pre>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="mb-4">
-        <CardHeader>
-          <CardTitle>Select Document</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4">
-            <div className="flex items-center space-x-2">
-              <Label htmlFor="file">File:</Label>
-              <Input type="file" id="file" onChange={handleFileChange} />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="documentType">Document Type:</Label>
-                <Select onValueChange={handleDocumentTypeChange}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select document type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="invoice">Invoice</SelectItem>
-                    <SelectItem value="receipt">Receipt</SelectItem>
-                    <SelectItem value="contract">Contract</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="language">Language:</Label>
-                <Select onValueChange={handleLanguageChange}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select language" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="es">Spanish</SelectItem>
-                    <SelectItem value="fr">French</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="mb-4">
-        <CardHeader>
-          <CardTitle>OCR Models</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4">
-            {activeOcrModels.map((model) => (
-              <div key={model.name} className="flex items-center space-x-2">
-                <Checkbox
-                  id={model.name}
-                  checked={model.isActive}
-                  onCheckedChange={() => handleOcrModelToggle(model.name)}
-                />
-                <Label htmlFor={model.name}>{model.displayName}</Label>
-                <span className="text-sm text-gray-500">{model.description}</span>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="mb-4">
-        <CardHeader>
-          <CardTitle>LLM Models</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4">
-            {llmModels.map((model) => (
-              <div key={model.name} className="flex items-center space-x-2">
-                <Checkbox
-                  id={model.name}
-                  checked={model.isActive}
-                  onCheckedChange={() => handleLlmModelToggle(model.name)}
-                />
-                <Label htmlFor={model.name}>{model.displayName}</Label>
-                <span className="text-sm text-gray-500">{model.description}</span>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Button onClick={processDocument} disabled={isProcessing} className="mb-4">
-        {isProcessing ? 'Processing...' : 'Start Processing'}
-      </Button>
-
-      {processingState.documentId && (
-        <div className="mt-4">
-          <h2 className="text-xl font-bold mb-2">Processing Status</h2>
-          <Card>
-            <CardHeader>
-              <CardTitle>Document: {processingState.fileName}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <Badge variant="secondary">Status: {processingState.status}</Badge>
-                <h3 className="text-lg font-semibold">Processing Steps:</h3>
-                <ul className="list-disc pl-5">
-                  {processingState.steps.map((step) => (
-                    <li key={step.id}>
-                      {step.name}: {step.status}
-                      {step.output && <p className="text-sm text-gray-500">Output: {String(step.output)}</p>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {processingState.ocrResults && Object.keys(processingState.ocrResults).length > 0 && (
-        <div className="mt-4">
-          <h2 className="text-xl font-bold mb-2">OCR Results</h2>
-          <Card>
-            <CardHeader>
-              <CardTitle>Extracted Text from Multiple Models</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {Object.entries(processingState.ocrResults).map(([model, result]: [string, any]) => (
-                <div key={model} className="mb-4">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    {model}
-                    {result.error ? (
-                      <Badge variant="destructive">Failed</Badge>
-                    ) : (
-                      <Badge variant="secondary">Confidence: {(result.confidence * 100).toFixed(1)}%</Badge>
-                    )}
-                  </h3>
-                  {result.error ? (
-                    <div className="text-red-600 bg-red-50 p-3 rounded">
-                      Error: {result.error}
-                    </div>
-                  ) : (
-                    <Textarea
-                      value={result.text}
-                      className="w-full h-32 resize-none mt-2"
-                      readOnly
-                    />
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {processingState.extractedData && (
-        <div className="mt-4">
-          <h2 className="text-xl font-bold mb-2">Extracted Structured Data</h2>
-          <Card>
-            <CardHeader>
-              <CardTitle>Final Extraction Result ({processingState.documentType})</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <pre className="bg-gray-50 p-4 rounded-lg text-sm overflow-auto max-h-96 whitespace-pre-wrap">
-                {JSON.stringify(processingState.extractedData, null, 2)}
-              </pre>
-            </CardContent>
-          </Card>
-          <GenericDocumentDisplay data={processingState.extractedData} documentType={processingState.documentType} />
-        </div>
-      )}
-    </div>
-  );
+{/* Recent Documents */}
+{processedInvoices.length > 0 && (
+<div className="mt-12">
+<h2 className="text-2xl font-semibold text-gray-900 mb-6">Recent Documents</h2>
+<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+{processedInvoices.map(invoice => (
+<div
+key={invoice.id}
+className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"
+>
+<div className="flex justify-between items-start mb-3">
+<div>
+<p className="font-semibold text-gray-900 text-lg">
+#{invoice.invoice_number || 'N/A'}
+</p>
+<p className="text-sm text-gray-500">
+{invoice.client_name || 'Unknown Client'}
+</p>
+</div>
+<div className="text-right">
+<p className="font-bold text-blue-600 text-lg">
+${invoice.total || '0.00'}
+</p>
+</div>
+</div>
+<div className="flex justify-between items-center text-sm text-gray-500">
+<span>{invoice.invoice_date || 'No date'}</span>
+<span>{new Date(invoice.created_at).toLocaleDateString()}</span>
+</div>
+</div>
+))}
+</div>
+</div>
+)}
+</div>
+);
 };
