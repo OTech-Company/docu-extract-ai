@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -424,7 +425,6 @@ export const DocumentExtraction = () => {
                     <SelectItem value="en">English</SelectItem>
                     <SelectItem value="es">Spanish</SelectItem>
                     <SelectItem value="fr">French</SelectItem>
-                    {/* Add more languages as needed */}
                   </SelectContent>
                 </Select>
               </div>
@@ -492,7 +492,7 @@ export const DocumentExtraction = () => {
                   {processingState.steps.map((step) => (
                     <li key={step.id}>
                       {step.name}: {step.status}
-                      {step.output && <p className="text-sm text-gray-500">Output: {step.output}</p>}
+                      {step.output && <p className="text-sm text-gray-500">Output: {String(step.output)}</p>}
                     </li>
                   ))}
                 </ul>
