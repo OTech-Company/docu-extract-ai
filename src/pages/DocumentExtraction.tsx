@@ -1,13 +1,14 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { FileUpload } from '../components/FileUpload';
 import { InvoiceDisplay } from '../components/InvoiceDisplay';
+import { GenericDocumentDisplay } from '../components/GenericDocumentDisplay';
 import { DocumentTypeSelector } from '../components/DocumentTypeSelector';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { Loader2, AlertCircle, FileText, Database, CheckCircle, Receipt, FileCheck, CreditCard, FileImage, Globe } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { db } from '../lib/supabase';
-import { InvoiceData, ProcessedInvoice, ProcessingStatistics } from '../types';
+import { InvoiceData, GenericDocumentData, ProcessedInvoice, ProcessingStatistics } from '../types';
 
 const API_KEYS = [
   "AIzaSyC80ERPHBGH4lFeN8C0aKRO-3TxT64GsEw",
@@ -76,17 +77,20 @@ const PROMPT_TEMPLATES: Record<string, (lang: string) => string> = {
     }
     Extract all fields from the image. Use ${lang} language for any text values.
   `,
-  // Add more templates for 'contract', 'statement', 'other' as needed
+  statement: (lang) => `
+    Output a valid JSON object for an ID or statement document. Extract all visible text and organize it into key-value pairs. Use descriptive field names based on what you see in the document. Use ${lang} language for any text values.
+  `,
+  contract: (lang) => `
+    Output a valid JSON object for a contract document. Extract key contract information like parties involved, dates, terms, etc. Use ${lang} language for any text values.
+  `,
   other: (lang) => `
     Output a valid JSON object with all structured data you can extract from the document image. Use ${lang} language for any text values.
   `
 };
 
-// Recursively convert empty string date fields to null within InvoiceData structure
 function fixDatesInInvoiceData(data: InvoiceData): InvoiceData {
   const newData = { ...data };
 
-  // Handle top-level invoice dates
   if (newData.invoice) {
     if (typeof newData.invoice.invoice_date === 'string' && newData.invoice.invoice_date.trim() === '') {
       newData.invoice.invoice_date = null;
@@ -96,26 +100,16 @@ function fixDatesInInvoiceData(data: InvoiceData): InvoiceData {
     }
   }
 
-  // Handle payment_instructions due_date
   if (newData.payment_instructions) {
     if (typeof newData.payment_instructions.due_date === 'string' && newData.payment_instructions.due_date.trim() === '') {
       newData.payment_instructions.due_date = null;
     }
   }
 
-  // Handle items array - assuming no dates directly in items, but good to show pattern
   if (Array.isArray(newData.items)) {
     newData.items = newData.items.map(item => {
-      // If items had nested date objects, you'd recurse here
       return item;
     });
-  }
-
-  // No dates expected in subtotal directly, but for completeness
-  if (newData.subtotal) {
-    // if (typeof newData.subtotal.some_date_field === 'string' && newData.subtotal.some_date_field.trim() === '') {
-    //   newData.subtotal.some_date_field = null;
-    // }
   }
 
   return newData;
@@ -125,6 +119,7 @@ export const DocumentExtraction = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentInvoice, setCurrentInvoice] = useState<InvoiceData | null>(null);
+  const [currentDocument, setCurrentDocument] = useState<GenericDocumentData | null>(null);
   const [processedInvoices, setProcessedInvoices] = useState<ProcessedInvoice[]>([]);
   const [processingStats, setProcessingStats] = useState<ProcessingStatistics | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -147,7 +142,6 @@ export const DocumentExtraction = () => {
     const result = await db.getRecentInvoices(10);
     if (result.success) {
       console.log('Raw data from db.getRecentInvoices:', result.data);
-      // Add timestamp fallback for database records that don't have it
       const invoicesWithTimestamp = (result.data || []).map(invoice => ({
         ...invoice,
         timestamp: Date.now()
@@ -192,10 +186,11 @@ export const DocumentExtraction = () => {
     setIsLoading(true);
     setError(null);
     setSaveStatus('idle');
+    setCurrentInvoice(null);
+    setCurrentDocument(null);
     let currentKeyIndex = 0;
 
     try {
-      // Save document processing record
       const docResult = await db.saveDocumentProcessing({
         fileName: file.name,
         fileSize: file.size,
@@ -211,7 +206,6 @@ export const DocumentExtraction = () => {
 
       const processWithApiKey = async (apiKey: string) => {
         try {
-          // Convert image to base64
           const base64Image = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => {
@@ -271,37 +265,47 @@ export const DocumentExtraction = () => {
             .replace(/^json\s*/i, '')
             .trim();
           console.log('Cleaned JSON string:', cleanedJsonStr);
-          let data: InvoiceData;
+          
+          let data: any;
           try {
             data = JSON.parse(cleanedJsonStr);
-            console.log('Parsed InvoiceData:', data);
+            console.log('Parsed document data:', data);
           } catch (parseErr) {
             setError('Failed to parse JSON: ' + (parseErr instanceof Error ? parseErr.message : String(parseErr)));
             setIsLoading(false);
             return;
           }
 
-          const fixedData = fixDatesInInvoiceData(data);
-          console.log('Fixed InvoiceData (empty dates should be null):', fixedData);
-
-          // Save to database
-          setSaveStatus('saving');
-          const saveResult = await db.saveExtractedInvoice({
-            documentId,
-            ...fixedData
-          });
+          // Check if this is invoice data or generic document data
+          const isInvoiceFormat = data.invoice && data.items && data.subtotal && data.payment_instructions;
           
-          if (saveResult.success) {
-            setSaveStatus('saved');
-            await db.updateStatistics();
-            await loadProcessingStats();
-            await loadRecentInvoices();
-          } else {
-            setSaveStatus('error');
-            setError('Failed to save to database: ' + JSON.stringify(saveResult.error || 'Unknown error'));
-          }
+          if (documentType === 'invoice' && isInvoiceFormat) {
+            // Handle as invoice
+            const fixedData = fixDatesInInvoiceData(data as InvoiceData);
+            console.log('Fixed InvoiceData (empty dates should be null):', fixedData);
 
-          setCurrentInvoice(data);
+            setSaveStatus('saving');
+            const saveResult = await db.saveExtractedInvoice({
+              documentId,
+              ...fixedData
+            });
+            
+            if (saveResult.success) {
+              setSaveStatus('saved');
+              await db.updateStatistics();
+              await loadProcessingStats();
+              await loadRecentInvoices();
+            } else {
+              setSaveStatus('error');
+              setError('Failed to save to database: ' + JSON.stringify(saveResult.error || 'Unknown error'));
+            }
+
+            setCurrentInvoice(fixedData);
+          } else {
+            // Handle as generic document
+            setCurrentDocument(data);
+            setSaveStatus('saved'); // For now, we don't save generic documents to the invoice table
+          }
         } catch (err) {
           setSaveStatus('error');
           setError(err instanceof Error ? err.message : 'An error occurred');
@@ -318,6 +322,7 @@ export const DocumentExtraction = () => {
 
   return (
     <div className="max-w-7xl mx-auto p-6">
+      
       <div className="text-center mb-8">
         <div className="flex items-center justify-center mb-4">
           <FileText className="w-12 h-12 text-blue-600 mr-3" />
@@ -328,7 +333,6 @@ export const DocumentExtraction = () => {
         </p>
       </div>
 
-      {/* Processing Statistics */}
       {processingStats && (
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow-md p-6 mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -376,11 +380,9 @@ export const DocumentExtraction = () => {
         </div>
       )}
 
-      {/* Enhanced Document Configuration Section */}
       <div className="mb-8">
         <h2 className="text-2xl font-semibold text-gray-900 mb-6">Document Configuration</h2>
         
-        {/* Document Type Selection */}
         <div className="mb-6">
           <div className="flex items-center mb-4">
             <FileText className="w-6 h-6 text-blue-600 mr-2" />
@@ -441,7 +443,6 @@ export const DocumentExtraction = () => {
           </div>
         </div>
 
-        {/* Language Selection */}
         <div className="mb-6">
           <div className="flex items-center mb-4">
             <Globe className="w-6 h-6 text-green-600 mr-2" />
@@ -486,7 +487,6 @@ export const DocumentExtraction = () => {
           </div>
         </div>
 
-        {/* Current Selection Summary */}
         <Card className="bg-gradient-to-r from-slate-50 to-gray-50 border-slate-200">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -513,7 +513,6 @@ export const DocumentExtraction = () => {
 
       <FileUpload onFileSelect={processDocument} isLoading={isLoading} />
 
-      {/* Status Messages */}
       <div className="flex justify-center mt-6 space-x-4">
         {isLoading && (
           <div className="flex items-center text-blue-600">
@@ -532,7 +531,7 @@ export const DocumentExtraction = () => {
         {saveStatus === 'saved' && (
           <div className="flex items-center text-green-600">
             <CheckCircle className="w-5 h-5 mr-2" />
-            <span>Successfully saved to database!</span>
+            <span>Successfully processed document!</span>
           </div>
         )}
 
@@ -544,14 +543,18 @@ export const DocumentExtraction = () => {
         )}
       </div>
 
-      {/* Current Invoice Display */}
       {currentInvoice && !isLoading && (
         <div className="mt-8">
           <InvoiceDisplay data={currentInvoice} />
         </div>
       )}
 
-      {/* Recent Documents */}
+      {currentDocument && !isLoading && (
+        <div className="mt-8">
+          <GenericDocumentDisplay data={currentDocument} documentType={documentType} />
+        </div>
+      )}
+
       {processedInvoices.length > 0 && (
         <div className="mt-12">
           <h2 className="text-2xl font-semibold text-gray-900 mb-6">Recent Documents</h2>
