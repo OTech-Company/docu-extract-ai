@@ -115,10 +115,11 @@ export const ProcessingPipeline = () => {
         body: formData,
       });
       if (!response.ok) throw new Error(`Image preprocessing API error: ${response.status}`);
-      // If backend returns an image file, convert to base64 for display
-      const arrayBuffer = await response.arrayBuffer();
-      const base64String = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-      return base64String;
+      // Parse JSON response with base64 images
+      const data = await response.json();
+      if (!data.processed) throw new Error('No processed image returned from API');
+      // Return a data URL for display
+      return `data:image/png;base64,${data.processed}`;
     } catch (error) {
       console.error('Image preprocessing API call failed:', error);
       throw error;
@@ -189,7 +190,7 @@ export const ProcessingPipeline = () => {
         const preprocessingTime = Date.now() - preprocessingStartTime;
         
         // Set the preprocessed image for display
-        setPreprocessedImage(`data:image/jpeg;base64,${preprocessedImageBase64}`);
+        setPreprocessedImage(preprocessedImageBase64);
 
         setProcessingState(prev => ({
           ...prev!,
@@ -403,13 +404,14 @@ export const ProcessingPipeline = () => {
         console.error('Image preprocessing failed:', preprocessingError);
         const fallbackTime = Date.now() - preprocessingStartTime;
         
+        setPreprocessedImage(null); // Ensure no preprocessed image is shown on failure
         setProcessingState(prev => ({
           ...prev!,
           steps: prev!.steps.map(step => 
             step.id === '2' ? { 
               ...step, 
-              status: 'error',
-              error: 'Image preprocessing failed, using original image',
+              status: 'completed',
+              output: 'Used original image (preprocessing failed)',
               processingTime: fallbackTime
             } : step
           )
