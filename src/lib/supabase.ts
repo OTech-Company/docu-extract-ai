@@ -9,6 +9,34 @@ export class DatabaseService {
     language: string;
   }) {
     try {
+      // Check for duplicates first
+      const { data: existingDoc } = await supabase
+        .from('document_processing')
+        .select('id')
+        .eq('file_name', data.fileName)
+        .eq('file_size', data.fileSize)
+        .eq('document_type', data.documentType)
+        .eq('language', data.language)
+        .gte('created_at', new Date(Date.now() - 5 * 60 * 1000).toISOString()) // Last 5 minutes
+        .maybeSingle();
+
+      if (existingDoc) {
+        console.log('Duplicate document detected, updating existing record');
+        const { data: result, error } = await supabase
+          .from('document_processing')
+          .update({
+            processing_attempts: supabase.raw('processing_attempts + 1'),
+            processing_status: 'processing',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingDoc.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        return { success: true, data: result };
+      }
+
       const { data: result, error } = await supabase
         .from('document_processing')
         .insert({
@@ -16,7 +44,9 @@ export class DatabaseService {
           file_size: data.fileSize,
           document_type: data.documentType,
           language: data.language,
-          processing_status: 'processing'
+          processing_status: 'processing',
+          processing_attempts: 1,
+          final_status: 'pending'
         })
         .select()
         .single();
@@ -25,6 +55,52 @@ export class DatabaseService {
       return { success: true, data: result };
     } catch (error) {
       console.error('Error saving document processing:', error);
+      return { success: false, error };
+    }
+  }
+
+  async updateDocumentWithOCR(documentId: string, ocrText: string, confidence: number) {
+    try {
+      const { data: result, error } = await supabase
+        .from('document_processing')
+        .update({
+          ocr_text: ocrText,
+          ocr_confidence: confidence,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', documentId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('Error updating document with OCR:', error);
+      return { success: false, error };
+    }
+  }
+
+  async updateDocumentStatus(documentId: string, status: string, finalStatus?: string, errorDetails?: string) {
+    try {
+      const updateData: any = {
+        processing_status: status,
+        updated_at: new Date().toISOString()
+      };
+
+      if (finalStatus) updateData.final_status = finalStatus;
+      if (errorDetails) updateData.error_details = errorDetails;
+
+      const { data: result, error } = await supabase
+        .from('document_processing')
+        .update(updateData)
+        .eq('id', documentId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('Error updating document status:', error);
       return { success: false, error };
     }
   }
@@ -38,6 +114,9 @@ export class DatabaseService {
     outputData?: any;
     processingTimeMs?: number;
     errorMessage?: string;
+    attemptNumber?: number;
+    modelUsed?: string;
+    confidenceScore?: number;
   }) {
     try {
       const { data: result, error } = await supabase
@@ -50,7 +129,10 @@ export class DatabaseService {
           input_data: data.inputData,
           output_data: data.outputData,
           processing_time_ms: data.processingTimeMs,
-          error_message: data.errorMessage
+          error_message: data.errorMessage,
+          attempt_number: data.attemptNumber || 1,
+          model_used: data.modelUsed,
+          confidence_score: data.confidenceScore
         })
         .select()
         .single();
@@ -84,6 +166,10 @@ export class DatabaseService {
         .single();
 
       if (error) throw error;
+
+      // Also update the main document with OCR text
+      await this.updateDocumentWithOCR(data.documentId, data.extractedText, data.confidenceScore);
+
       return { success: true, data: result };
     } catch (error) {
       console.error('Error saving OCR result:', error);
@@ -97,19 +183,19 @@ export class DatabaseService {
         .from('extracted_invoices')
         .insert({
           document_id: data.documentId,
-          client_name: data.invoice.client_name,
-          client_address: data.invoice.client_address,
-          seller_name: data.invoice.seller_name,
-          seller_address: data.invoice.seller_address,
-          invoice_number: data.invoice.invoice_number,
-          invoice_date: data.invoice.invoice_date,
-          due_date: data.invoice.due_date,
-          tax: parseFloat(data.subtotal.tax) || 0,
-          discount: parseFloat(data.subtotal.discount) || 0,
-          total: parseFloat(data.subtotal.total) || 0,
-          bank_name: data.payment_instructions.bank_name,
-          account_number: data.payment_instructions.account_number,
-          payment_method: data.payment_instructions.payment_method,
+          client_name: data.invoice?.client_name,
+          client_address: data.invoice?.client_address,
+          seller_name: data.invoice?.seller_name,
+          seller_address: data.invoice?.seller_address,
+          invoice_number: data.invoice?.invoice_number,
+          invoice_date: data.invoice?.invoice_date,
+          due_date: data.invoice?.due_date,
+          tax: parseFloat(data.subtotal?.tax) || 0,
+          discount: parseFloat(data.subtotal?.discount) || 0,
+          total: parseFloat(data.subtotal?.total) || 0,
+          bank_name: data.payment_instructions?.bank_name,
+          account_number: data.payment_instructions?.account_number,
+          payment_method: data.payment_instructions?.payment_method,
           validation_status: 'validated'
         })
         .select()
@@ -130,58 +216,151 @@ export class DatabaseService {
         await supabase.from('invoice_items').insert(items);
       }
 
+      // Update document status to completed
+      await this.updateDocumentStatus(data.documentId, 'completed', 'success');
+
       return { success: true, data: result };
     } catch (error) {
       console.error('Error saving extracted invoice:', error);
+      
+      // Update document status to failed
+      await this.updateDocumentStatus(data.documentId, 'failed', 'failed', error.message);
+      
+      return { success: false, error };
+    }
+  }
+
+  async getComprehensiveAnalytics() {
+    try {
+      // Get all processing data
+      const { data: processingData, error: processingError } = await supabase
+        .from('document_processing')
+        .select(`
+          *,
+          processing_steps (*),
+          ocr_results (*),
+          extracted_invoices (
+            *,
+            invoice_items (*)
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (processingError) throw processingError;
+
+      // Calculate comprehensive statistics
+      const totalDocuments = processingData?.length || 0;
+      const successfulExtractions = processingData?.filter(doc => 
+        doc.extracted_invoices && doc.extracted_invoices.length > 0
+      ).length || 0;
+      const failedExtractions = processingData?.filter(doc => 
+        doc.final_status === 'failed'
+      ).length || 0;
+      const inProgressExtractions = processingData?.filter(doc => 
+        doc.processing_status === 'processing' && doc.final_status !== 'failed'
+      ).length || 0;
+
+      // Calculate average confidence scores
+      const ocrResults = processingData?.flatMap(doc => doc.ocr_results || []) || [];
+      const avgConfidence = ocrResults.length > 0 
+        ? ocrResults.reduce((sum, ocr) => sum + (ocr.confidence_score || 0), 0) / ocrResults.length
+        : 0;
+
+      // Calculate processing attempts statistics
+      const totalAttempts = processingData?.reduce((sum, doc) => sum + (doc.processing_attempts || 1), 0) || 0;
+      const avgProcessingTime = processingData?.length > 0 
+        ? processingData.reduce((sum, doc) => {
+            const steps = doc.processing_steps || [];
+            const totalTime = steps.reduce((stepSum, step) => stepSum + (step.processing_time_ms || 0), 0);
+            return sum + totalTime;
+          }, 0) / processingData.length
+        : 0;
+
+      // Document type distribution
+      const documentTypes = processingData?.reduce((acc, doc) => {
+        acc[doc.document_type] = (acc[doc.document_type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>) || {};
+
+      // Language distribution
+      const languages = processingData?.reduce((acc, doc) => {
+        acc[doc.language] = (acc[doc.language] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>) || {};
+
+      return {
+        success: true,
+        data: {
+          overview: {
+            total_documents: totalDocuments,
+            successful_extractions: successfulExtractions,
+            failed_extractions: failedExtractions,
+            in_progress_extractions: inProgressExtractions,
+            success_rate: totalDocuments > 0 ? Math.round((successfulExtractions / totalDocuments) * 100) : 0,
+            avg_confidence_score: Math.round(avgConfidence * 10000) / 100, // Convert to percentage
+            total_processing_attempts: totalAttempts,
+            avg_processing_time_ms: Math.round(avgProcessingTime),
+            fine_tuning_threshold: 500,
+            progress_percentage: Math.min(100, Math.round((totalDocuments / 500) * 100)),
+            records_remaining: Math.max(0, 500 - totalDocuments),
+            fine_tuning_ready: totalDocuments >= 500
+          },
+          document_types: documentTypes,
+          languages: languages,
+          recent_documents: processingData?.slice(0, 20) || [],
+          all_documents: processingData || []
+        }
+      };
+    } catch (error) {
+      console.error('Error getting comprehensive analytics:', error);
       return { success: false, error };
     }
   }
 
   async getProcessingStatistics() {
-    try {
-      const { data, error } = await supabase
-        .from('processing_statistics')
-        .select('*')
-        .single();
-
-      if (error) throw error;
-
-      const progressPercentage = Math.round((data.total_documents / data.fine_tuning_threshold) * 100);
-      const recordsRemaining = Math.max(0, data.fine_tuning_threshold - data.total_documents);
-
-      return {
-        success: true,
-        data: {
-          ...data,
-          progress_percentage: progressPercentage,
-          records_remaining: recordsRemaining,
-          fine_tuning_ready: data.total_documents >= data.fine_tuning_threshold
-        }
-      };
-    } catch (error) {
-      console.error('Error getting processing statistics:', error);
-      return { success: false, error };
+    const analyticsResult = await this.getComprehensiveAnalytics();
+    if (analyticsResult.success) {
+      return { success: true, data: analyticsResult.data.overview };
     }
+    return analyticsResult;
   }
 
   async updateStatistics() {
     try {
-      const { data: totalDocs } = await supabase
-        .from('document_processing')
-        .select('id', { count: 'exact' });
+      const analyticsResult = await this.getComprehensiveAnalytics();
+      if (!analyticsResult.success) {
+        throw new Error('Failed to get analytics data');
+      }
 
-      const { data: successfulDocs } = await supabase
-        .from('extracted_invoices')
-        .select('id', { count: 'exact' });
+      const overview = analyticsResult.data.overview;
 
-      await supabase
+      // Get existing statistics record
+      const { data: existingStats } = await supabase
         .from('processing_statistics')
-        .update({
-          total_documents: totalDocs?.length || 0,
-          successful_extractions: successfulDocs?.length || 0,
-          last_updated: new Date().toISOString()
-        })
-        .eq('id', (await supabase.from('processing_statistics').select('id').single()).data?.id);
+        .select('id')
+        .limit(1)
+        .maybeSingle();
+
+      const updateData = {
+        total_documents: overview.total_documents,
+        successful_extractions: overview.successful_extractions,
+        failed_extractions: overview.failed_extractions,
+        total_ocr_processed: overview.total_documents,
+        avg_confidence_score: overview.avg_confidence_score / 100, // Convert back to decimal
+        total_processing_attempts: overview.total_processing_attempts,
+        last_updated: new Date().toISOString()
+      };
+
+      if (existingStats) {
+        await supabase
+          .from('processing_statistics')
+          .update(updateData)
+          .eq('id', existingStats.id);
+      } else {
+        await supabase
+          .from('processing_statistics')
+          .insert(updateData);
+      }
 
       return { success: true };
     } catch (error) {
@@ -196,7 +375,16 @@ export class DatabaseService {
         .from('extracted_invoices')
         .select(`
           *,
-          invoice_items (*)
+          invoice_items (*),
+          document_processing!inner (
+            file_name,
+            document_type,
+            language,
+            processing_status,
+            final_status,
+            ocr_confidence,
+            processing_attempts
+          )
         `)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -205,6 +393,30 @@ export class DatabaseService {
       return { success: true, data };
     } catch (error) {
       console.error('Error getting recent invoices:', error);
+      return { success: false, error };
+    }
+  }
+
+  async getAllDocuments(limit = 100) {
+    try {
+      const { data, error } = await supabase
+        .from('document_processing')
+        .select(`
+          *,
+          processing_steps (*),
+          ocr_results (*),
+          extracted_invoices (
+            *,
+            invoice_items (*)
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return { success: true, data };
+    } catch (error) {
+      console.error('Error getting all documents:', error);
       return { success: false, error };
     }
   }

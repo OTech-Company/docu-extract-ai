@@ -1,201 +1,50 @@
+
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Download, TrendingUp, FileText, Database } from 'lucide-react';
+import { BarChart3, Download, TrendingUp, FileText, Database, AlertCircle, CheckCircle, Clock, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { db } from '../lib/supabase';
 
 export const Reports = () => {
-  const [stats, setStats] = useState<any>(null);
-  const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
-  const [monthlyData, setMonthlyData] = useState<any[]>([]);
-  const [documentTypeData, setDocumentTypeData] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
+    loadAnalytics();
   }, []);
 
-  const loadData = async () => {
+  const loadAnalytics = async () => {
     setLoading(true);
     try {
-      // Load basic stats and invoices first
-      const [statsResult, invoicesResult] = await Promise.all([
-        db.getProcessingStatistics(),
-        db.getRecentInvoices(50)
-      ]);
-      
-      if (statsResult.success) {
-        setStats(statsResult.data);
+      const result = await db.getComprehensiveAnalytics();
+      if (result.success) {
+        setAnalytics(result.data);
       }
-      
-      if (invoicesResult.success) {
-        const invoices = invoicesResult.data || [];
-        setRecentInvoices(invoices);
-        
-        // Generate chart data from the actual invoice data
-        const monthlyStats = generateMonthlyStatsFromInvoices(invoices);
-        setMonthlyData(monthlyStats);
-        
-        const typeDistribution = analyzeDocumentTypes(invoices);
-        setDocumentTypeData(typeDistribution);
-      }
-
-      // Try to load additional data for better charts
-      await loadMonthlyData();
-      await loadDocumentTypeData();
-      
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Error loading analytics:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadMonthlyData = async () => {
-    try {
-      // Use existing getRecentInvoices method to get more data
-      const allInvoicesResult = await db.getRecentInvoices(1000); // Get more invoices
-      
-      if (allInvoicesResult.success && allInvoicesResult.data) {
-        const monthlyStats = generateMonthlyStatsFromInvoices(allInvoicesResult.data);
-        setMonthlyData(monthlyStats);
-      } else {
-        // Generate from current recentInvoices
-        const monthlyStats = generateMonthlyStatsFromInvoices(recentInvoices);
-        setMonthlyData(monthlyStats);
-      }
-    } catch (error) {
-      console.error('Error loading monthly data:', error);
-      // Generate from current recentInvoices as fallback
-      const monthlyStats = generateMonthlyStatsFromInvoices(recentInvoices);
-      setMonthlyData(monthlyStats);
-    }
-  };
-
-  const loadDocumentTypeData = async () => {
-    try {
-      // Use existing getRecentInvoices method to analyze document types
-      const allInvoicesResult = await db.getRecentInvoices(1000);
-      
-      if (allInvoicesResult.success && allInvoicesResult.data) {
-        const typeDistribution = analyzeDocumentTypes(allInvoicesResult.data);
-        setDocumentTypeData(typeDistribution);
-      } else {
-        // Analyze current recentInvoices
-        const typeDistribution = analyzeDocumentTypes(recentInvoices);
-        setDocumentTypeData(typeDistribution);
-      }
-    } catch (error) {
-      console.error('Error loading document type data:', error);
-      // Analyze current recentInvoices as fallback
-      const typeDistribution = analyzeDocumentTypes(recentInvoices);
-      setDocumentTypeData(typeDistribution);
-    }
-  };
-
-  const generateMonthlyStatsFromInvoices = (invoices) => {
-    if (!invoices || invoices.length === 0) {
-      return [
-        { month: 'Jan', processed: 0, successful: 0 },
-        { month: 'Feb', processed: 0, successful: 0 },
-        { month: 'Mar', processed: 0, successful: 0 },
-        { month: 'Apr', processed: 0, successful: 0 },
-        { month: 'May', processed: 0, successful: 0 },
-        { month: 'Jun', processed: 0, successful: 0 }
-      ];
-    }
-
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const now = new Date();
-    const monthlyStats = [];
-
-    // Get last 6 months
-    for (let i = 5; i >= 0; i--) {
-      const targetDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthIndex = targetDate.getMonth();
-      const year = targetDate.getFullYear();
-      const monthName = monthNames[monthIndex];
-      
-      // Filter invoices for this month and year
-      const monthInvoices = invoices.filter(invoice => {
-        const invoiceDate = new Date(invoice.created_at);
-        return invoiceDate.getMonth() === monthIndex && invoiceDate.getFullYear() === year;
-      });
-
-      const processed = monthInvoices.length;
-      // Assume successful extraction if we have the required fields
-      const successful = monthInvoices.filter(invoice => 
-        invoice.invoice_number || invoice.client_name || invoice.total
-      ).length;
-
-      monthlyStats.push({
-        month: monthName,
-        processed,
-        successful
-      });
-    }
-
-    return monthlyStats;
-  };
-
-  const analyzeDocumentTypes = (invoices) => {
-    if (!invoices || invoices.length === 0) {
-      return [
-        { name: 'No Data', value: 1, color: '#9CA3AF' }
-      ];
-    }
-
-    // Analyze the actual invoice data to determine types
-    const total = invoices.length;
-    
-    // Look for patterns in the data to classify document types
-    let invoiceCount = 0;
-    let receiptCount = 0;
-    let contractCount = 0;
-    let statementCount = 0;
-
-    invoices.forEach(invoice => {
-      // Simple heuristics based on available data
-      if (invoice.invoice_number) {
-        invoiceCount++;
-      } else if (invoice.total && !invoice.client_name) {
-        receiptCount++;
-      } else if (invoice.client_name && !invoice.total) {
-        contractCount++;
-      } else {
-        statementCount++;
-      }
-    });
-
-    const result = [];
-    if (invoiceCount > 0) result.push({ name: 'Invoices', value: invoiceCount, color: '#3B82F6' });
-    if (receiptCount > 0) result.push({ name: 'Receipts', value: receiptCount, color: '#10B981' });
-    if (contractCount > 0) result.push({ name: 'Contracts', value: contractCount, color: '#F59E0B' });
-    if (statementCount > 0) result.push({ name: 'Statements', value: statementCount, color: '#EF4444' });
-
-    // If no clear classification, just show all as invoices
-    if (result.length === 0) {
-      result.push({ name: 'Documents', value: total, color: '#3B82F6' });
-    }
-
-    return result;
-  };
-
   const exportReport = () => {
+    if (!analytics) return;
+
     const reportData = {
       timestamp: new Date().toISOString(),
-      statistics: stats,
-      recentInvoices: recentInvoices.slice(0, 10),
-      monthlyData,
-      documentTypeData,
+      overview: analytics.overview,
+      document_types: analytics.document_types,
+      languages: analytics.languages,
+      recent_documents: analytics.recent_documents.slice(0, 20),
       summary: {
-        totalDocuments: stats?.total_documents || 0,
-        successRate: stats?.total_documents > 0 
-          ? Math.round((stats.successful_extractions / stats.total_documents) * 100)
-          : 0,
-        avgProcessingTime: '1.3s', // This would come from your stats if available
-        finetuningProgress: stats?.progress_percentage || 0
+        total_documents: analytics.overview.total_documents,
+        success_rate: analytics.overview.success_rate,
+        avg_confidence: analytics.overview.avg_confidence_score,
+        avg_processing_time: `${Math.round(analytics.overview.avg_processing_time_ms / 1000 * 10) / 10}s`,
+        fine_tuning_progress: analytics.overview.progress_percentage
       }
     };
 
@@ -203,11 +52,74 @@ export const Reports = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `document-extraction-report-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `comprehensive-report-${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const generateChartData = () => {
+    if (!analytics) return { monthlyData: [], documentTypeData: [], languageData: [], statusData: [] };
+
+    // Generate monthly data from actual documents
+    const documents = analytics.all_documents || [];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const monthlyData = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const targetDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthIndex = targetDate.getMonth();
+      const year = targetDate.getFullYear();
+      const monthName = monthNames[monthIndex];
+      
+      const monthDocs = documents.filter(doc => {
+        const docDate = new Date(doc.created_at);
+        return docDate.getMonth() === monthIndex && docDate.getFullYear() === year;
+      });
+
+      const processed = monthDocs.length;
+      const successful = monthDocs.filter(doc => doc.final_status === 'success').length;
+      const failed = monthDocs.filter(doc => doc.final_status === 'failed').length;
+
+      monthlyData.push({
+        month: monthName,
+        processed,
+        successful,
+        failed
+      });
+    }
+
+    // Document type distribution
+    const documentTypeData = Object.entries(analytics.document_types).map(([type, count], index) => {
+      const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4'];
+      return {
+        name: type.charAt(0).toUpperCase() + type.slice(1),
+        value: count,
+        color: colors[index % colors.length]
+      };
+    });
+
+    // Language distribution
+    const languageData = Object.entries(analytics.languages).map(([lang, count], index) => {
+      const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+      return {
+        name: lang.toUpperCase(),
+        value: count,
+        color: colors[index % colors.length]
+      };
+    });
+
+    // Status distribution
+    const overview = analytics.overview;
+    const statusData = [
+      { name: 'Successful', value: overview.successful_extractions, color: '#10B981' },
+      { name: 'Failed', value: overview.failed_extractions, color: '#EF4444' },
+      { name: 'In Progress', value: overview.in_progress_extractions, color: '#F59E0B' }
+    ].filter(item => item.value > 0);
+
+    return { monthlyData, documentTypeData, languageData, statusData };
   };
 
   if (loading) {
@@ -216,12 +128,27 @@ export const Reports = () => {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading analytics data...</p>
+            <p className="text-gray-600">Loading comprehensive analytics...</p>
           </div>
         </div>
       </div>
     );
   }
+
+  if (!analytics) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="text-center py-12">
+          <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500">Failed to load analytics data</p>
+          <Button onClick={loadAnalytics} className="mt-4">Retry</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const { monthlyData, documentTypeData, languageData, statusData } = generateChartData();
+  const { overview } = analytics;
 
   return (
     <div className="max-w-7xl mx-auto p-6">
@@ -229,81 +156,84 @@ export const Reports = () => {
         <div>
           <div className="flex items-center mb-4">
             <BarChart3 className="w-12 h-12 text-blue-600 mr-3" />
-            <h1 className="text-4xl font-bold text-gray-900">Reports & Analytics</h1>
+            <h1 className="text-4xl font-bold text-gray-900">Comprehensive Analytics</h1>
           </div>
           <p className="text-xl text-gray-600">
-            Comprehensive insights into document processing performance and trends
+            Complete insights into document processing performance and database activity
           </p>
         </div>
-        <Button onClick={exportReport} className="flex items-center space-x-2">
-          <Download className="w-4 h-4" />
-          <span>Export Report</span>
-        </Button>
+        <div className="flex space-x-4">
+          <Button onClick={loadAnalytics} variant="outline">
+            <Database className="w-4 h-4 mr-2" />
+            Refresh Data
+          </Button>
+          <Button onClick={exportReport}>
+            <Download className="w-4 h-4 mr-2" />
+            Export Report
+          </Button>
+        </div>
       </div>
 
       {/* Key Metrics */}
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Documents</CardTitle>
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{recentInvoices.length || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                +{Math.round(Math.random() * 20)}% from last month
-              </p>
-            </CardContent>
-          </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Documents</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{overview.total_documents}</div>
+            <p className="text-xs text-muted-foreground">
+              {overview.total_processing_attempts} total attempts
+            </p>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {stats.total_documents > 0 
-                  ? Math.round((recentInvoices.length / recentInvoices.length) * 100)
-                  : 0}%
-              </div>
-              <p className="text-xs text-muted-foreground">
-                +{(Math.random() * 5).toFixed(1)}% from last month
-              </p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{overview.success_rate}%</div>
+            <p className="text-xs text-muted-foreground">
+              {overview.successful_extractions} successful / {overview.failed_extractions} failed
+            </p>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Fine-tuning Progress</CardTitle>
-              <Database className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{(recentInvoices.length / 500 )*100 || 0}%</div>
-              <p className="text-xs text-muted-foreground">
-                {(500 - recentInvoices.length) || 0} records remaining
-              </p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">OCR Confidence</CardTitle>
+            <Zap className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{overview.avg_confidence_score}%</div>
+            <p className="text-xs text-muted-foreground">
+              Average OCR confidence score
+            </p>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Avg Processing Time</CardTitle>
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.avg_processing_time || '1.3s'}</div>
-              <p className="text-xs text-muted-foreground">
-                -{(Math.random() * 1).toFixed(1)}s from last month
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Avg Processing Time</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {Math.round(overview.avg_processing_time_ms / 1000 * 10) / 10}s
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Per document processing
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Charts */}
+      {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* Monthly Trends */}
         <Card>
           <CardHeader>
             <CardTitle>Monthly Processing Trends</CardTitle>
@@ -315,16 +245,45 @@ export const Reports = () => {
                 <XAxis dataKey="month" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="processed" fill="#3B82F6" name="Processed" />
+                <Bar dataKey="processed" fill="#3B82F6" name="Total Processed" />
                 <Bar dataKey="successful" fill="#10B981" name="Successful" />
+                <Bar dataKey="failed" fill="#EF4444" name="Failed" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
+        {/* Processing Status Distribution */}
         <Card>
           <CardHeader>
-            <CardTitle>Document Types Distribution</CardTitle>
+            <CardTitle>Processing Status Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Document Types */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Document Types</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -336,7 +295,7 @@ export const Reports = () => {
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  label={({ name, value }) => `${name}: ${value}`}
                 >
                   {documentTypeData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
@@ -347,79 +306,125 @@ export const Reports = () => {
             </ResponsiveContainer>
           </CardContent>
         </Card>
+
+        {/* Languages */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Language Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={languageData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#3B82F6" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Success Rate Over Time */}
+      {/* Fine-tuning Progress */}
       <Card className="mb-8">
         <CardHeader>
-          <CardTitle>Success Rate Trend</CardTitle>
+          <CardTitle>Fine-tuning Dataset Progress</CardTitle>
         </CardHeader>
         <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={monthlyData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis />
-              <Tooltip formatter={(value, name) => {
-                const entry = monthlyData.find(d => d.successful === value);
-                const rate = entry ? ((entry.successful / entry.processed) * 100).toFixed(1) : '0';
-                return [`${rate}%`, 'Success Rate'];
-              }} />
-              <Line 
-                type="monotone" 
-                dataKey="successful" 
-                stroke="#10B981" 
-                strokeWidth={2}
-                dot={{ fill: '#10B981' }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-medium">Progress to fine-tuning threshold</span>
+              <span className="text-sm text-gray-500">
+                {overview.total_documents} / 500 documents
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${Math.min(100, overview.progress_percentage)}%` }}
+              ></div>
+            </div>
+            <div className="flex justify-between text-sm text-gray-600">
+              <span>{overview.progress_percentage}% complete</span>
+              <span>{overview.records_remaining} records remaining</span>
+            </div>
+            {overview.fine_tuning_ready && (
+              <Badge className="bg-green-100 text-green-800">
+                Ready for fine-tuning!
+              </Badge>
+            )}
+          </div>
         </CardContent>
       </Card>
 
-      {/* Recent Invoices Table */}
+      {/* Detailed Documents Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Processed Documents ({recentInvoices.length} total)</CardTitle>
+          <CardTitle>Recent Document Processing Details</CardTitle>
         </CardHeader>
         <CardContent>
-          {recentInvoices.length === 0 ? (
+          {analytics.recent_documents.length === 0 ? (
             <div className="text-center py-8">
               <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">No processed documents found</p>
+              <p className="text-gray-500">No documents processed yet</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2">Invoice #</th>
-                    <th className="text-left p-2">Client</th>
-                    <th className="text-left p-2">Amount</th>
-                    <th className="text-left p-2">Date</th>
-                    <th className="text-left p-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentInvoices.slice(0, 10).map((invoice) => (
-                    <tr key={invoice.id} className="border-b hover:bg-gray-50">
-                      <td className="p-2 font-medium">{invoice.invoice_number || 'N/A'}</td>
-                      <td className="p-2">{invoice.client_name || 'Unknown'}</td>
-                      <td className="p-2">
-                        ${typeof invoice.total === 'number' 
-                          ? invoice.total.toFixed(2) 
-                          : (invoice.total || '0.00')}
-                      </td>
-                      <td className="p-2">{new Date(invoice.created_at).toLocaleDateString()}</td>
-                      <td className="p-2">
-                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
-                          Processed
-                        </span>
-                      </td>
-                    </tr>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>File Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Language</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>OCR Confidence</TableHead>
+                    <TableHead>Attempts</TableHead>
+                    <TableHead>Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {analytics.recent_documents.slice(0, 20).map((doc: any) => (
+                    <TableRow key={doc.id}>
+                      <TableCell className="font-medium max-w-xs truncate">
+                        {doc.file_name}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">
+                          {doc.document_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{doc.language.toUpperCase()}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center space-x-2">
+                          {doc.final_status === 'success' && (
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                          )}
+                          {doc.final_status === 'failed' && (
+                            <AlertCircle className="w-4 h-4 text-red-600" />
+                          )}
+                          {doc.final_status === 'pending' && (
+                            <Clock className="w-4 h-4 text-yellow-600" />
+                          )}
+                          <span className="text-sm">
+                            {doc.final_status || doc.processing_status}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {doc.ocr_confidence 
+                          ? `${Math.round(doc.ocr_confidence * 10000) / 100}%`
+                          : 'N/A'
+                        }
+                      </TableCell>
+                      <TableCell>{doc.processing_attempts || 1}</TableCell>
+                      <TableCell>
+                        {new Date(doc.created_at).toLocaleDateString()}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
