@@ -1,8 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Download, TrendingUp, FileText, Database, Clock, Languages } from 'lucide-react';
+import { BarChart3, Download, TrendingUp, FileText, Database, Clock, Languages, AlertCircle, CheckCircle, Clock, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell, ScatterChart, Scatter } from 'recharts';
 import { db } from '../lib/supabase';
 
@@ -34,22 +37,11 @@ interface ProcessingStep {
 }
 
 export const Reports = () => {
-  const [allDocuments, setAllDocuments] = useState<Document[]>([]);
-  const [processingSteps, setProcessingSteps] = useState<ProcessingStep[]>([]);
-  const [stats, setStats] = useState<any>(null);
-  const [selectedDocumentType, setSelectedDocumentType] = useState<string>('all');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
+  const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // Derived data
-  const [monthlyData, setMonthlyData] = useState<any[]>([]);
-  const [documentTypeData, setDocumentTypeData] = useState<any[]>([]);
-  const [languageData, setLanguageData] = useState<any[]>([]);
-  const [performanceData, setPerformanceData] = useState<any[]>([]);
-  const [statusData, setStatusData] = useState<any[]>([]);
-
   useEffect(() => {
-    loadData();
+    loadAnalytics();
   }, []);
 
   useEffect(() => {
@@ -58,7 +50,7 @@ export const Reports = () => {
     }
   }, [allDocuments, processingSteps, selectedDocumentType, selectedLanguage]);
 
-  const loadData = async () => {
+  const loadAnalytics = async () => {
     setLoading(true);
     try {
       const [documentsResult, stepsResult, statsResult] = await Promise.all([
@@ -79,8 +71,12 @@ export const Reports = () => {
         setStats(statsResult.data);
       }
 
+      const result = await db.getComprehensiveAnalytics();
+      if (result.success) {
+        setAnalytics(result.data);
+      }
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Error loading analytics:', error);
     } finally {
       setLoading(false);
     }
@@ -295,12 +291,27 @@ export const Reports = () => {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading analytics data...</p>
+            <p className="text-gray-600">Loading comprehensive analytics...</p>
           </div>
         </div>
       </div>
     );
   }
+
+  if (!analytics) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="text-center py-12">
+          <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500">Failed to load analytics data</p>
+          <Button onClick={loadAnalytics} className="mt-4">Retry</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const { monthlyData, documentTypeData, languageData, statusData } = generateChartData();
+  const { overview } = analytics;
 
   return (
     <div className="max-w-7xl mx-auto p-6">
@@ -314,10 +325,16 @@ export const Reports = () => {
             Comprehensive insights into all document processing activities
           </p>
         </div>
-        <Button onClick={exportReport} className="flex items-center space-x-2">
-          <Download className="w-4 h-4" />
-          <span>Export Report</span>
-        </Button>
+        <div className="flex space-x-4">
+          <Button onClick={loadAnalytics} variant="outline">
+            <Database className="w-4 h-4 mr-2" />
+            Refresh Data
+          </Button>
+          <Button onClick={exportReport}>
+            <Download className="w-4 h-4 mr-2" />
+            Export Report
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -418,6 +435,7 @@ export const Reports = () => {
 
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* Monthly Trends */}
         <Card>
           <CardHeader>
             <CardTitle>Monthly Processing Trends</CardTitle>
@@ -429,17 +447,46 @@ export const Reports = () => {
                 <XAxis dataKey="month" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="processed" fill="#3B82F6" name="Processed" />
+                <Bar dataKey="processed" fill="#3B82F6" name="Total Processed" />
                 <Bar dataKey="successful" fill="#10B981" name="Successful" />
+                <Bar dataKey="failed" fill="#EF4444" name="Failed" />
                 <Bar dataKey="failed" fill="#EF4444" name="Failed" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
+        {/* Processing Status Distribution */}
         <Card>
           <CardHeader>
-            <CardTitle>Document Types Distribution</CardTitle>
+            <CardTitle>Processing Status Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Document Types */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Document Types</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -451,7 +498,7 @@ export const Reports = () => {
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  label={({ name, value }) => `${name}: ${value}`}
                 >
                   {documentTypeData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
@@ -459,6 +506,24 @@ export const Reports = () => {
                 </Pie>
                 <Tooltip />
               </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Languages */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Language Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={languageData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#3B82F6" />
+              </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -577,8 +642,8 @@ export const Reports = () => {
                       <td className="p-2">{new Date(doc.created_at).toLocaleDateString()}</td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

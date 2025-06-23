@@ -27,6 +27,10 @@ export interface InvoiceData {
   };
 }
 
+export interface GenericDocumentData {
+  [key: string]: any;
+}
+
 export interface ProcessedInvoice {
   id: string;
   document_id: string;

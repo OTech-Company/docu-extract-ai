@@ -28,12 +28,10 @@ export const Header = () => {
             <a href="#architecture" className="text-gray-600 hover:text-blue-600 transition-colors">
               How it Works
             </a>
-            <a href="#pricing" className="text-gray-600 hover:text-blue-600 transition-colors">
-              Pricing
-            </a>
-            <Button variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
+
+            {/* <Button variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
               Sign In
-            </Button>
+            </Button> */}
             <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
               Get Started
             </Button>
@@ -58,13 +56,11 @@ export const Header = () => {
               <a href="#architecture" className="text-gray-600 hover:text-blue-600 transition-colors">
                 How it Works
               </a>
-              <a href="#pricing" className="text-gray-600 hover:text-blue-600 transition-colors">
-                Pricing
-              </a>
+
               <div className="flex flex-col space-y-2 pt-4">
-                <Button variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
+                {/* <Button variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
                   Sign In
-                </Button>
+                </Button> */}
                 <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
                   Get Started
                 </Button>
