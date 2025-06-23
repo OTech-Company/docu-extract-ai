@@ -1,4 +1,6 @@
+
 import type { DocumentProcessingState, ProcessingStep, OCRModel, ExtractedInvoiceData, InvoiceDetails, ItemDetails, SubtotalDetails, OcrResult, ValidationResult } from '../types/processing';
+import { supabase } from '../integrations/supabase/client';
 
 // LLM API service functions
 export interface LLMResponse {
@@ -8,7 +10,22 @@ export interface LLMResponse {
   error?: string;
 }
 
-// Use the provided API keys directly
+// Get API keys from Supabase environment
+const getApiKey = async (keyName: string): Promise<string | null> => {
+  try {
+    const { data, error } = await supabase.functions.invoke('get-secret', {
+      body: { name: keyName }
+    });
+    if (error) {
+      console.error(`Error getting ${keyName}:`, error);
+      return null;
+    }
+    return data?.value || null;
+  } catch (error) {
+    console.error(`Failed to get ${keyName}:`, error);
+    return null;
+  }
+};
 
 const JSON_EXTRACTION_PROMPT = `Extract invoice data from the following text and return ONLY a valid JSON object with this exact structure. Do NOT include any other text, explanations, or formatting outside of the JSON object. Wrap the JSON object in triple backticks, e.g., \`\`\`json{...}\`\`\`:
 {
@@ -47,7 +64,8 @@ export async function callGeminiAPI(text: string): Promise<LLMResponse> {
   
   console.log('Calling Gemini API with text length:', text.length);
   
-  if (!GEMINI_API_KEY) {
+  const geminiApiKey = await getApiKey('REACT_APP_Gemini_API_KEY');
+  if (!geminiApiKey) {
     console.error('Gemini API key not configured');
     return {
       model: 'Gemini',
@@ -59,7 +77,7 @@ export async function callGeminiAPI(text: string): Promise<LLMResponse> {
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,7 +140,8 @@ export async function callGroqAPI(text: string): Promise<LLMResponse> {
   
   console.log('Calling Groq API with text length:', text.length);
   
-  if (!GROQ_API_KEY) {
+  const groqApiKey = await getApiKey('REACT_APP_GROQ_API_KEY');
+  if (!groqApiKey) {
     console.error('Groq API key not configured');
     return {
       model: 'Groq',
@@ -136,7 +155,7 @@ export async function callGroqAPI(text: string): Promise<LLMResponse> {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Authorization': `Bearer ${groqApiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -200,7 +219,8 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
   
   console.log('Calling Qwen API with text length:', text.length);
   
-  if (!QWEN_API_KEY) {
+  const qwenApiKey = await getApiKey('REACT_APP_QWEN_API_KEY');
+  if (!qwenApiKey) {
     console.error('Qwen API key not configured');
     return {
       model: 'Qwen',
@@ -214,7 +234,7 @@ export async function callQwenAPI(text: string): Promise<LLMResponse> {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${QWEN_API_KEY}`,
+        'Authorization': `Bearer ${qwenApiKey}`,
         'HTTP-Referer': 'https://docuextract.ai',
         'X-Title': 'DocuExtract AI',
         'Content-Type': 'application/json'
@@ -296,7 +316,8 @@ export async function applyMajorityVoting(responses: LLMResponse[]): Promise<Ext
     return validResponses[0].json as ExtractedInvoiceData;
   }
 
-  if (!QWEN_API_KEY) {
+  const qwenApiKey = await getApiKey('REACT_APP_QWEN_API_KEY');
+  if (!qwenApiKey) {
     console.error('OpenRouter API key not configured for majority voting');
     throw new Error('OpenRouter API key not configured for majority voting');
   }
@@ -312,7 +333,7 @@ Return ONLY the final JSON object with the majority-voted values:`;
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${QWEN_API_KEY}`,
+        'Authorization': `Bearer ${qwenApiKey}`,
         'HTTP-Referer': 'https://docuextract.ai',
         'X-Title': 'DocuExtract AI',
         'Content-Type': 'application/json'
