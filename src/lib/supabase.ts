@@ -25,7 +25,6 @@ export class DatabaseService {
         const { data: result, error } = await supabase
           .from('document_processing')
           .update({
-            processing_attempts: supabase.raw('processing_attempts + 1'),
             processing_status: 'processing',
             updated_at: new Date().toISOString()
           })
@@ -44,9 +43,7 @@ export class DatabaseService {
           file_size: data.fileSize,
           document_type: data.documentType,
           language: data.language,
-          processing_status: 'processing',
-          processing_attempts: 1,
-          final_status: 'pending'
+          processing_status: 'processing'
         })
         .select()
         .single();
@@ -64,8 +61,6 @@ export class DatabaseService {
       const { data: result, error } = await supabase
         .from('document_processing')
         .update({
-          ocr_text: ocrText,
-          ocr_confidence: confidence,
           updated_at: new Date().toISOString()
         })
         .eq('id', documentId)
@@ -86,9 +81,6 @@ export class DatabaseService {
         processing_status: status,
         updated_at: new Date().toISOString()
       };
-
-      if (finalStatus) updateData.final_status = finalStatus;
-      if (errorDetails) updateData.error_details = errorDetails;
 
       const { data: result, error } = await supabase
         .from('document_processing')
@@ -129,10 +121,7 @@ export class DatabaseService {
           input_data: data.inputData,
           output_data: data.outputData,
           processing_time_ms: data.processingTimeMs,
-          error_message: data.errorMessage,
-          attempt_number: data.attemptNumber || 1,
-          model_used: data.modelUsed,
-          confidence_score: data.confidenceScore
+          error_message: data.errorMessage
         })
         .select()
         .single();
@@ -224,7 +213,7 @@ export class DatabaseService {
       console.error('Error saving extracted invoice:', error);
       
       // Update document status to failed
-      await this.updateDocumentStatus(data.documentId, 'failed', 'failed', error.message);
+      await this.updateDocumentStatus(data.documentId, 'failed', 'failed', (error as any).message);
       
       return { success: false, error };
     }
@@ -254,10 +243,10 @@ export class DatabaseService {
         doc.extracted_invoices && doc.extracted_invoices.length > 0
       ).length || 0;
       const failedExtractions = processingData?.filter(doc => 
-        doc.final_status === 'failed'
+        doc.processing_status === 'failed'
       ).length || 0;
       const inProgressExtractions = processingData?.filter(doc => 
-        doc.processing_status === 'processing' && doc.final_status !== 'failed'
+        doc.processing_status === 'processing'
       ).length || 0;
 
       // Calculate average confidence scores
@@ -266,8 +255,8 @@ export class DatabaseService {
         ? ocrResults.reduce((sum, ocr) => sum + (ocr.confidence_score || 0), 0) / ocrResults.length
         : 0;
 
-      // Calculate processing attempts statistics
-      const totalAttempts = processingData?.reduce((sum, doc) => sum + (doc.processing_attempts || 1), 0) || 0;
+      // Calculate processing attempts statistics - use default of 1 since field may not exist
+      const totalAttempts = processingData?.reduce((sum, doc) => sum + 1, 0) || 0;
       const avgProcessingTime = processingData?.length > 0 
         ? processingData.reduce((sum, doc) => {
             const steps = doc.processing_steps || [];
@@ -345,9 +334,6 @@ export class DatabaseService {
         total_documents: overview.total_documents,
         successful_extractions: overview.successful_extractions,
         failed_extractions: overview.failed_extractions,
-        total_ocr_processed: overview.total_documents,
-        avg_confidence_score: overview.avg_confidence_score / 100, // Convert back to decimal
-        total_processing_attempts: overview.total_processing_attempts,
         last_updated: new Date().toISOString()
       };
 
@@ -380,10 +366,7 @@ export class DatabaseService {
             file_name,
             document_type,
             language,
-            processing_status,
-            final_status,
-            ocr_confidence,
-            processing_attempts
+            processing_status
           )
         `)
         .order('created_at', { ascending: false })

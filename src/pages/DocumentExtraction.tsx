@@ -7,9 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { toast } from "@/components/ui/use-toast"
-import { ProcessingStep } from '@/types/processing';
+import { ProcessingStep, OCRModel } from '@/types/processing';
 import { GenericDocumentDisplay } from '@/components/GenericDocumentDisplay';
-import { OcrModel } from '@/types/processing';
 import { Checkbox } from "@/components/ui/checkbox"
 import { db } from '@/lib/supabase';
 
@@ -38,7 +37,7 @@ const initialProcessingState: DocumentProcessingState = {
   validationResults: undefined
 };
 
-const initialOcrModels: OcrModel[] = [
+const initialOcrModels: OCRModel[] = [
   { name: 'tesseract', displayName: 'Tesseract OCR', description: 'Open source OCR engine', isActive: true },
   { name: 'easyocr', displayName: 'EasyOCR', description: 'Easy to use OCR with multiple languages', isActive: false },
   { name: 'aws_textract', displayName: 'AWS Textract', description: 'Amazon\'s cloud-based OCR service', isActive: false },
@@ -57,7 +56,7 @@ export const DocumentExtraction = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingState, setProcessingState] = useState<DocumentProcessingState>(initialProcessingState);
   const [ocrText, setOcrText] = useState('');
-  const [activeOcrModels, setActiveOcrModels] = useState<OcrModel[]>(initialOcrModels);
+  const [activeOcrModels, setActiveOcrModels] = useState<OCRModel[]>(initialOcrModels);
   const [llmModels, setLlmModels] = useState(initialLlmModels);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -182,7 +181,7 @@ export const DocumentExtraction = () => {
             confidenceScore: ocrData.confidence
           });
 
-        } catch (error) {
+        } catch (error: any) {
           console.error(`OCR failed for ${model.name}:`, error);
           ocrResults[model.name] = {
             text: '',
@@ -255,7 +254,7 @@ export const DocumentExtraction = () => {
             confidenceScore: llmData.confidence || 0.8
           });
 
-        } catch (error) {
+        } catch (error: any) {
           console.error(`LLM extraction failed for ${llm.name}:`, error);
           
           // Save failed processing step
@@ -304,7 +303,7 @@ export const DocumentExtraction = () => {
         description: "Document has been successfully processed and saved.",
       });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Processing failed:', error);
       
       // Update document status to failed
