@@ -22,6 +22,66 @@ const API_KEYS = [
   "AIzaSyCy7NppzTrbrxSfPS8Or2X2ya62JMRwn8E"
 ];
 
+const PROMPT_TEMPLATES: Record<string, (lang: string) => string> = {
+  invoice: (lang) => `
+    You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. 
+    You must have exactly the following keys and nested structure (do not add, omit, or change any keys):
+    {
+      "invoice": {
+        "client_name": "<string>",
+        "client_address": "<string>",
+        "seller_name": "<string>",
+        "seller_address": "<string>",
+        "invoice_number": "<string>",
+        "invoice_date": "<string>",
+        "due_date": "<string>"
+      },
+      "items": [
+        {
+          "description": "<string>",
+          "quantity": "<string>",
+          "total_price": "<string>"
+        }
+      ],
+      "subtotal": {
+        "tax": "<string>",
+        "discount": "<string>",
+        "total": "<string>"
+      },
+      "payment_instructions": {
+        "due_date": "<string>",
+        "bank_name": "<string>",
+        "account_number": "<string>",
+        "payment_method": "<string>"
+      }
+    }
+    IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. 
+    If a value is missing, use an empty string. Process this invoice document in ${lang} language. 
+    All property names and string values must be enclosed in double quotes.
+  `,
+  receipt: (lang) => `
+    Output a valid JSON object for a receipt with the following structure:
+    {
+      "store_name": "<string>",
+      "store_address": "<string>",
+      "date": "<string>",
+      "items": [
+        {
+          "name": "<string>",
+          "quantity": "<string>",
+          "price": "<string>"
+        }
+      ],
+      "total": "<string>"
+    }
+    Extract all fields from the image. Use ${lang} language for any text values.
+  `,
+  // Add more templates for 'contract', 'statement', 'other' as needed
+  other: (lang) => `
+    Output a valid JSON object with all structured data you can extract from the document image. Use ${lang} language for any text values.
+  `
+};
+
 // Recursively convert empty string date fields to null within InvoiceData structure
 function fixDatesInInvoiceData(data: InvoiceData): InvoiceData {
   const newData = { ...data };
@@ -162,43 +222,13 @@ export const DocumentExtraction = () => {
             reader.readAsDataURL(file);
           });
 
+          const prompt = (PROMPT_TEMPLATES[documentType] || PROMPT_TEMPLATES['other'])(language);
+
           const requestBody = {
             contents: [
               {
                 parts: [
-                  {
-                    text: `You must output a strictly valid JSON object with no extra text, markdown formatting, or comments. You must have exactly the following keys and nested structure (do not add, omit, or change any keys):
-                    {
-                      "invoice": {
-                        "client_name": "<string>",
-                        "client_address": "<string>",
-                        "seller_name": "<string>",
-                        "seller_address": "<string>",
-                        "invoice_number": "<string>",
-                        "invoice_date": "<string>",
-                        "due_date": "<string>"
-                      },
-                      "items": [
-                        {
-                          "description": "<string>",
-                          "quantity": "<string>",
-                          "total_price": "<string>"
-                        }
-                      ],
-                      "subtotal": {
-                        "tax": "<string>",
-                        "discount": "<string>",
-                        "total": "<string>"
-                      },
-                      "payment_instructions": {
-                        "due_date": "<string>",
-                        "bank_name": "<string>",
-                        "account_number": "<string>",
-                        "payment_method": "<string>"
-                      }
-                    }
-                    IMPORTANT: Do not copy the example above. Instead, extract the actual data from the provided document image and fill in the fields with the real values. If a value is missing, use an empty string. Process this ${documentType} document in ${language} language. All property names and string values must be enclosed in double quotes.`
-                  },
+                  { text: prompt },
                   {
                     inline_data: {
                       mime_type: "image/jpeg",
