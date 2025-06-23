@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 
 
-def preprocess_image(image_path, save_output=False, output_path="preprocessed.png"):
+def preprocess_image(image_path, save_output=False, output_path="preprocessed.png", grayscale_path="grayscale.png"):
     # Load the image
     image = cv2.imread(image_path)
     if image is None:
@@ -11,6 +11,10 @@ def preprocess_image(image_path, save_output=False, output_path="preprocessed.pn
 
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Save grayscale image for comparison
+    if save_output and grayscale_path:
+        cv2.imwrite(grayscale_path, gray)
 
     # Resize (optional)
     scale_percent = 150  # Increase size by 150%
@@ -34,4 +38,4 @@ def preprocess_image(image_path, save_output=False, output_path="preprocessed.pn
     if save_output:
         cv2.imwrite(output_path, cleaned)
 
-    return cleaned
+    return gray, cleaned

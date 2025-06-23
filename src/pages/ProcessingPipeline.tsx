@@ -99,14 +99,26 @@ export const ProcessingPipeline = () => {
   // Helper to call the image preprocessing API
   async function callImagePreprocessAPI(base64Image: string) {
     try {
+      // Convert base64 to Blob
+      const byteCharacters = atob(base64Image);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/jpeg' });
+      const formData = new FormData();
+      formData.append('image', blob, 'upload.jpg'); // 'image' matches backend
+
       const response = await fetch('http://localhost:5000/img-preprocess', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Image })
+        body: formData,
       });
       if (!response.ok) throw new Error(`Image preprocessing API error: ${response.status}`);
-      const result = await response.json();
-      return result.image; // Assuming the API returns { image: "base64_string" }
+      // If backend returns an image file, convert to base64 for display
+      const arrayBuffer = await response.arrayBuffer();
+      const base64String = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      return base64String;
     } catch (error) {
       console.error('Image preprocessing API call failed:', error);
       throw error;
