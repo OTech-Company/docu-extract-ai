@@ -31,6 +31,7 @@ export const ProcessingPipeline = () => {
   const [processingState, setProcessingState] = useState<DocumentProcessingState | null>(null);
   const [selectedOCRModels, setSelectedOCRModels] = useState<string[]>(['paddle', 'tesseract']);
   const [llmMode, setLLMMode] = useState<'single' | 'majority'>('single');
+  const [preprocessedImage, setPreprocessedImage] = useState<string | null>(null);
 
   const validateJSON = (data: ExtractedInvoiceData | null): ValidationResult => {
     const errors: string[] = [];
@@ -95,6 +96,23 @@ export const ProcessingPipeline = () => {
     }
   }
 
+  // Helper to call the image preprocessing API
+  async function callImagePreprocessAPI(base64Image: string) {
+    try {
+      const response = await fetch('http://localhost:5000/img-preprocess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Image })
+      });
+      if (!response.ok) throw new Error(`Image preprocessing API error: ${response.status}`);
+      const result = await response.json();
+      return result.image; // Assuming the API returns { image: "base64_string" }
+    } catch (error) {
+      console.error('Image preprocessing API call failed:', error);
+      throw error;
+    }
+  }
+
   const processDocument = useCallback(async (file: File) => {
     console.log('Starting document processing for:', file.name);
     
@@ -116,6 +134,7 @@ export const ProcessingPipeline = () => {
     };
 
     setProcessingState(initialState);
+    setPreprocessedImage(null); // Reset preprocessed image
 
     try {
       // Save document processing record
@@ -149,211 +168,423 @@ export const ProcessingPipeline = () => {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const preprocessingTime = 1000;
 
-      setProcessingState(prev => ({
-        ...prev!,
-        steps: prev!.steps.map(step => 
-          step.id === '2' ? { 
-            ...step, 
-            status: 'completed', 
-            output: 'Image preprocessed',
-            processingTime: preprocessingTime
-          } : step
-        )
-      }));
+      const preprocessingStartTime = Date.now();
 
-      if (docResult.success) {
-        await db.saveProcessingStep({
-          documentId: docResult.data.id,
-          stepName: 'Image Preprocessing',
-          stepOrder: 2,
-          status: 'completed',
-          outputData: { result: 'Image preprocessed' },
-          processingTimeMs: preprocessingTime
-        });
-      }
-
-      // Step 3: OCR Processing
-      setProcessingState(prev => ({
-        ...prev!,
-        status: 'ocr',
-        steps: prev!.steps.map(step => 
-          step.id === '3' ? { ...step, status: 'processing' } : step
-        )
-      }));
-
-      const ocrResults: Record<string, OcrResult> = {};
-      for (const model of selectedOCRModels) {
-        try {
-          ocrResults[model] = await callOcrApi(base64Image, model);
-        } catch (err) {
-          console.error(`OCR failed for model ${model}:`, err);
-          ocrResults[model] = { text: '', confidence: 0, error: String(err) };
-        }
-      }
-
-      setProcessingState(prev => ({
-        ...prev!,
-        ocrResults,
-        steps: prev!.steps.map(step => 
-          step.id === '3' ? { ...step, status: 'completed', output: ocrResults } : step
-        )
-      }));
-
-      // Step 4: LLM Data Extraction
-      setProcessingState(prev => ({
-        ...prev!,
-        status: 'extraction',
-        steps: prev!.steps.map(step => 
-          step.id === '4' ? { ...step, status: 'processing' } : step
-        )
-      }));
-
-      const extractionStartTime = Date.now();
-      let extractedData: ExtractedInvoiceData | null = null;
-      let llmOutputs: Record<string, LLMResponse> = {};
-
-      // Prepare OCR data for LLMs - include all selected OCR models
-      const ocrDataForLLMs = Object.entries(ocrResults)
-        .filter(([modelName, result]) => result.text && !result.error)
-        .map(([modelName, result]) => `${modelName}: ${result.text}`)
-        .join('\n\n');
-
-      if (!ocrDataForLLMs) {
-        throw new Error('No valid OCR results available for LLM processing');
-      }
-
-      console.log('OCR data for LLMs:', ocrDataForLLMs.substring(0, 200) + '...');
-
-      if (llmMode === 'single') {
-        // Single LLM mode - use all OCR data
-        const geminiResponse = await callGeminiAPI(ocrDataForLLMs);
-        extractedData = geminiResponse.json as ExtractedInvoiceData;
-        llmOutputs = { gemini: geminiResponse };
+      try {
+        // Call the image preprocessing API
+        const preprocessedImageBase64 = await callImagePreprocessAPI(base64Image);
+        const preprocessingTime = Date.now() - preprocessingStartTime;
         
-        if (geminiResponse.error) {
-          console.error('Gemini API failed:', geminiResponse.error);
-        }
-      } else {
-        // Majority voting mode - use all 3 LLMs with all OCR data
-        console.log('Starting majority voting with 3 LLMs using all OCR data');
-        
-        const [geminiResponse, groqResponse, qwenResponse] = await Promise.all([
-          callGeminiAPI(ocrDataForLLMs),
-          callGroqAPI(ocrDataForLLMs),
-          callQwenAPI(ocrDataForLLMs)
-        ]);
+        // Set the preprocessed image for display
+        setPreprocessedImage(`data:image/jpeg;base64,${preprocessedImageBase64}`);
 
-        llmOutputs = {
-          gemini: geminiResponse,
-          groq: groqResponse,
-          qwen: qwenResponse
-        };
-
-        // Apply majority voting with Mistral - always pass all 3 responses
-        try {
-          extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
-        } catch (error) {
-          console.error('Majority voting failed:', error);
-          // Fallback to first successful response
-          const validResponses = [geminiResponse, groqResponse, qwenResponse].filter(r => r.json && !r.error);
-          if (validResponses.length > 0) {
-            extractedData = validResponses[0].json as ExtractedInvoiceData;
-          } else {
-            extractedData = null;
-          }
-        }
-      }
-
-      const extractionTime = Date.now() - extractionStartTime;
-
-      setProcessingState(prev => ({
-        ...prev!,
-        extractedData,
-        steps: prev!.steps.map(step => 
-          step.id === '4' ? { 
-            ...step, 
-            status: extractedData ? 'completed' : 'error',
-            output: { finalResult: extractedData, llmOutputs },
-            processingTime: extractionTime,
-            error: extractedData ? undefined : 'Failed to extract data from LLMs'
-          } : step
-        )
-      }));
-
-      // Step 5: JSON Validation
-      setProcessingState(prev => ({
-        ...prev!,
-        status: 'validation',
-        steps: prev!.steps.map(step => 
-          step.id === '5' ? { ...step, status: 'processing' } : step
-        )
-      }));
-
-      const validationResult = validateJSON(extractedData);
-
-      setProcessingState(prev => ({
-        ...prev!,
-        validationResults: validationResult,
-        steps: prev!.steps.map(step => 
-          step.id === '5' ? { 
-            ...step, 
-            status: validationResult.isValid ? 'completed' : 'error',
-            output: validationResult
-          } : step
-        )
-      }));
-
-      // Step 6: Database Storage
-      if (validationResult.isValid && extractedData && docResult.success) {
         setProcessingState(prev => ({
           ...prev!,
           steps: prev!.steps.map(step => 
-            step.id === '6' ? { ...step, status: 'processing' } : step
+            step.id === '2' ? { 
+              ...step, 
+              status: 'completed', 
+              output: 'Image preprocessed',
+              processingTime: preprocessingTime
+            } : step
           )
         }));
 
-        try {
-          const saveResult = await db.saveExtractedInvoice({
+        if (docResult.success) {
+          await db.saveProcessingStep({
             documentId: docResult.data.id,
-            ...extractedData
-          });
-
-          setProcessingState(prev => ({
-            ...prev!,
+            stepName: 'Image Preprocessing',
+            stepOrder: 2,
             status: 'completed',
-            steps: prev!.steps.map(step => 
-              step.id === '6' ? { 
-                ...step, 
-                status: saveResult.success ? 'completed' : 'error',
-                output: saveResult.success ? 'Data saved successfully' : 'Failed to save data'
-              } : step
-            )
-          }));
-
-          if (saveResult.success) {
-            await db.updateStatistics();
-          }
-        } catch (error) {
-          console.error('Database storage failed:', error);
-          setProcessingState(prev => ({
-            ...prev!,
-            status: 'error',
-            steps: prev!.steps.map(step => 
-              step.id === '6' ? { 
-                ...step, 
-                status: 'error',
-                error: 'Database storage failed'
-              } : step
-            )
-          }));
+            outputData: { result: 'Image preprocessed' },
+            processingTimeMs: preprocessingTime
+          });
         }
-      } else {
+
+        // Use the preprocessed image for OCR instead of the original
+        const imageForOCR = preprocessedImageBase64;
+
+        // Step 3: OCR Processing
         setProcessingState(prev => ({
           ...prev!,
-          status: validationResult.isValid ? 'completed' : 'error'
+          status: 'ocr',
+          steps: prev!.steps.map(step => 
+            step.id === '3' ? { ...step, status: 'processing' } : step
+          )
         }));
+
+        const ocrResults: Record<string, OcrResult> = {};
+        for (const model of selectedOCRModels) {
+          try {
+            ocrResults[model] = await callOcrApi(imageForOCR, model);
+          } catch (err) {
+            console.error(`OCR failed for model ${model}:`, err);
+            ocrResults[model] = { text: '', confidence: 0, error: String(err) };
+          }
+        }
+
+        setProcessingState(prev => ({
+          ...prev!,
+          ocrResults,
+          steps: prev!.steps.map(step => 
+            step.id === '3' ? { ...step, status: 'completed', output: ocrResults } : step
+          )
+        }));
+
+        // Step 4: LLM Data Extraction
+        setProcessingState(prev => ({
+          ...prev!,
+          status: 'extraction',
+          steps: prev!.steps.map(step => 
+            step.id === '4' ? { ...step, status: 'processing' } : step
+          )
+        }));
+
+        const extractionStartTime = Date.now();
+        let extractedData: ExtractedInvoiceData | null = null;
+        let llmOutputs: Record<string, LLMResponse> = {};
+
+        // Prepare OCR data for LLMs - include all selected OCR models
+        const ocrDataForLLMs = Object.entries(ocrResults)
+          .filter(([modelName, result]) => result.text && !result.error)
+          .map(([modelName, result]) => `${modelName}: ${result.text}`)
+          .join('\n\n');
+
+        if (!ocrDataForLLMs) {
+          throw new Error('No valid OCR results available for LLM processing');
+        }
+
+        console.log('OCR data for LLMs:', ocrDataForLLMs.substring(0, 200) + '...');
+
+        if (llmMode === 'single') {
+          // Single LLM mode - use all OCR data
+          const geminiResponse = await callGeminiAPI(ocrDataForLLMs);
+          extractedData = geminiResponse.json as ExtractedInvoiceData;
+          llmOutputs = { gemini: geminiResponse };
+          
+          if (geminiResponse.error) {
+            console.error('Gemini API failed:', geminiResponse.error);
+          }
+        } else {
+          // Majority voting mode - use all 3 LLMs with all OCR data
+          console.log('Starting majority voting with 3 LLMs using all OCR data');
+          
+          const [geminiResponse, groqResponse, qwenResponse] = await Promise.all([
+            callGeminiAPI(ocrDataForLLMs),
+            callGroqAPI(ocrDataForLLMs),
+            callQwenAPI(ocrDataForLLMs)
+          ]);
+
+          llmOutputs = {
+            gemini: geminiResponse,
+            groq: groqResponse,
+            qwen: qwenResponse
+          };
+
+          // Apply majority voting with Mistral - always pass all 3 responses
+          try {
+            extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
+          } catch (error) {
+            console.error('Majority voting failed:', error);
+            // Fallback to first successful response
+            const validResponses = [geminiResponse, groqResponse, qwenResponse].filter(r => r.json && !r.error);
+            if (validResponses.length > 0) {
+              extractedData = validResponses[0].json as ExtractedInvoiceData;
+            } else {
+              extractedData = null;
+            }
+          }
+        }
+
+        const extractionTime = Date.now() - extractionStartTime;
+
+        setProcessingState(prev => ({
+          ...prev!,
+          extractedData,
+          steps: prev!.steps.map(step => 
+            step.id === '4' ? { 
+              ...step, 
+              status: extractedData ? 'completed' : 'error',
+              output: { finalResult: extractedData, llmOutputs },
+              processingTime: extractionTime,
+              error: extractedData ? undefined : 'Failed to extract data from LLMs'
+            } : step
+          )
+        }));
+
+        // Step 5: JSON Validation
+        setProcessingState(prev => ({
+          ...prev!,
+          status: 'validation',
+          steps: prev!.steps.map(step => 
+            step.id === '5' ? { ...step, status: 'processing' } : step
+          )
+        }));
+
+        const validationResult = validateJSON(extractedData);
+
+        setProcessingState(prev => ({
+          ...prev!,
+          validationResults: validationResult,
+          steps: prev!.steps.map(step => 
+            step.id === '5' ? { 
+              ...step, 
+              status: validationResult.isValid ? 'completed' : 'error',
+              output: validationResult
+            } : step
+          )
+        }));
+
+        // Step 6: Database Storage
+        if (validationResult.isValid && extractedData && docResult.success) {
+          setProcessingState(prev => ({
+            ...prev!,
+            steps: prev!.steps.map(step => 
+              step.id === '6' ? { ...step, status: 'processing' } : step
+            )
+          }));
+
+          try {
+            const saveResult = await db.saveExtractedInvoice({
+              documentId: docResult.data.id,
+              ...extractedData
+            });
+
+            setProcessingState(prev => ({
+              ...prev!,
+              status: 'completed',
+              steps: prev!.steps.map(step => 
+                step.id === '6' ? { 
+                  ...step, 
+                  status: saveResult.success ? 'completed' : 'error',
+                  output: saveResult.success ? 'Data saved successfully' : 'Failed to save data'
+                } : step
+              )
+            }));
+
+            if (saveResult.success) {
+              await db.updateStatistics();
+            }
+          } catch (error) {
+            console.error('Database storage failed:', error);
+            setProcessingState(prev => ({
+              ...prev!,
+              status: 'error',
+              steps: prev!.steps.map(step => 
+                step.id === '6' ? { 
+                  ...step, 
+                  status: 'error',
+                  error: 'Database storage failed'
+                } : step
+              )
+            }));
+          }
+        } else {
+          setProcessingState(prev => ({
+            ...prev!,
+            status: validationResult.isValid ? 'completed' : 'error'
+          }));
+        }
+
+      } catch (preprocessingError) {
+        console.error('Image preprocessing failed:', preprocessingError);
+        const fallbackTime = Date.now() - preprocessingStartTime;
+        
+        setProcessingState(prev => ({
+          ...prev!,
+          steps: prev!.steps.map(step => 
+            step.id === '2' ? { 
+              ...step, 
+              status: 'error',
+              error: 'Image preprocessing failed, using original image',
+              processingTime: fallbackTime
+            } : step
+          )
+        }));
+
+        // Continue with original image if preprocessing fails
+        // Step 3: OCR Processing
+        setProcessingState(prev => ({
+          ...prev!,
+          status: 'ocr',
+          steps: prev!.steps.map(step => 
+            step.id === '3' ? { ...step, status: 'processing' } : step
+          )
+        }));
+
+        const ocrResults: Record<string, OcrResult> = {};
+        for (const model of selectedOCRModels) {
+          try {
+            ocrResults[model] = await callOcrApi(base64Image, model);
+          } catch (err) {
+            console.error(`OCR failed for model ${model}:`, err);
+            ocrResults[model] = { text: '', confidence: 0, error: String(err) };
+          }
+        }
+
+        setProcessingState(prev => ({
+          ...prev!,
+          ocrResults,
+          steps: prev!.steps.map(step => 
+            step.id === '3' ? { ...step, status: 'completed', output: ocrResults } : step
+          )
+        }));
+
+        // Step 4: LLM Data Extraction
+        setProcessingState(prev => ({
+          ...prev!,
+          status: 'extraction',
+          steps: prev!.steps.map(step => 
+            step.id === '4' ? { ...step, status: 'processing' } : step
+          )
+        }));
+
+        const extractionStartTime = Date.now();
+        let extractedData: ExtractedInvoiceData | null = null;
+        let llmOutputs: Record<string, LLMResponse> = {};
+
+        // Prepare OCR data for LLMs - include all selected OCR models
+        const ocrDataForLLMs = Object.entries(ocrResults)
+          .filter(([modelName, result]) => result.text && !result.error)
+          .map(([modelName, result]) => `${modelName}: ${result.text}`)
+          .join('\n\n');
+
+        if (!ocrDataForLLMs) {
+          throw new Error('No valid OCR results available for LLM processing');
+        }
+
+        console.log('OCR data for LLMs:', ocrDataForLLMs.substring(0, 200) + '...');
+
+        if (llmMode === 'single') {
+          // Single LLM mode - use all OCR data
+          const geminiResponse = await callGeminiAPI(ocrDataForLLMs);
+          extractedData = geminiResponse.json as ExtractedInvoiceData;
+          llmOutputs = { gemini: geminiResponse };
+          
+          if (geminiResponse.error) {
+            console.error('Gemini API failed:', geminiResponse.error);
+          }
+        } else {
+          // Majority voting mode - use all 3 LLMs with all OCR data
+          console.log('Starting majority voting with 3 LLMs using all OCR data');
+          
+          const [geminiResponse, groqResponse, qwenResponse] = await Promise.all([
+            callGeminiAPI(ocrDataForLLMs),
+            callGroqAPI(ocrDataForLLMs),
+            callQwenAPI(ocrDataForLLMs)
+          ]);
+
+          llmOutputs = {
+            gemini: geminiResponse,
+            groq: groqResponse,
+            qwen: qwenResponse
+          };
+
+          // Apply majority voting with Mistral - always pass all 3 responses
+          try {
+            extractedData = await applyMajorityVoting([geminiResponse, groqResponse, qwenResponse]);
+          } catch (error) {
+            console.error('Majority voting failed:', error);
+            // Fallback to first successful response
+            const validResponses = [geminiResponse, groqResponse, qwenResponse].filter(r => r.json && !r.error);
+            if (validResponses.length > 0) {
+              extractedData = validResponses[0].json as ExtractedInvoiceData;
+            } else {
+              extractedData = null;
+            }
+          }
+        }
+
+        const extractionTime = Date.now() - extractionStartTime;
+
+        setProcessingState(prev => ({
+          ...prev!,
+          extractedData,
+          steps: prev!.steps.map(step => 
+            step.id === '4' ? { 
+              ...step, 
+              status: extractedData ? 'completed' : 'error',
+              output: { finalResult: extractedData, llmOutputs },
+              processingTime: extractionTime,
+              error: extractedData ? undefined : 'Failed to extract data from LLMs'
+            } : step
+          )
+        }));
+
+        // Step 5: JSON Validation
+        setProcessingState(prev => ({
+          ...prev!,
+          status: 'validation',
+          steps: prev!.steps.map(step => 
+            step.id === '5' ? { ...step, status: 'processing' } : step
+          )
+        }));
+
+        const validationResult = validateJSON(extractedData);
+
+        setProcessingState(prev => ({
+          ...prev!,
+          validationResults: validationResult,
+          steps: prev!.steps.map(step => 
+            step.id === '5' ? { 
+              ...step, 
+              status: validationResult.isValid ? 'completed' : 'error',
+              output: validationResult
+            } : step
+          )
+        }));
+
+        // Step 6: Database Storage
+        if (validationResult.isValid && extractedData && docResult.success) {
+          setProcessingState(prev => ({
+            ...prev!,
+            steps: prev!.steps.map(step => 
+              step.id === '6' ? { ...step, status: 'processing' } : step
+            )
+          }));
+
+          try {
+            const saveResult = await db.saveExtractedInvoice({
+              documentId: docResult.data.id,
+              ...extractedData
+            });
+
+            setProcessingState(prev => ({
+              ...prev!,
+              status: 'completed',
+              steps: prev!.steps.map(step => 
+                step.id === '6' ? { 
+                  ...step, 
+                  status: saveResult.success ? 'completed' : 'error',
+                  output: saveResult.success ? 'Data saved successfully' : 'Failed to save data'
+                } : step
+              )
+            }));
+
+            if (saveResult.success) {
+              await db.updateStatistics();
+            }
+          } catch (error) {
+            console.error('Database storage failed:', error);
+            setProcessingState(prev => ({
+              ...prev!,
+              status: 'error',
+              steps: prev!.steps.map(step => 
+                step.id === '6' ? { 
+                  ...step, 
+                  status: 'error',
+                  error: 'Database storage failed'
+                } : step
+              )
+            }));
+          }
+        } else {
+          setProcessingState(prev => ({
+            ...prev!,
+            status: validationResult.isValid ? 'completed' : 'error'
+          }));
+        }
       }
 
     } catch (error) {
@@ -427,6 +658,21 @@ export const ProcessingPipeline = () => {
             </div>
           </div>
 
+          {/* Display preprocessed image if available */}
+          {preprocessedImage && (
+            <div className="bg-white rounded-lg shadow-sm border p-6">
+              <h3 className="text-lg font-semibold mb-4">Preprocessed Image</h3>
+              <div className="flex justify-center mb-4">
+                <img 
+                  src={preprocessedImage} 
+                  alt="Preprocessed document" 
+                  className="max-w-full max-h-96 object-contain border rounded"
+                />
+              </div>
+              <p className="text-center text-gray-600">Image preprocessed</p>
+            </div>
+          )}
+
           <ProcessingSteps steps={processingState.steps} />
 
           {processingState.extractedData && (
@@ -437,7 +683,10 @@ export const ProcessingPipeline = () => {
           )}
 
           <button
-            onClick={() => setProcessingState(null)}
+            onClick={() => {
+              setProcessingState(null);
+              setPreprocessedImage(null);
+            }}
             className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors"
           >
             Process Another Document
